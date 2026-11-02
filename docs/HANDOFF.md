@@ -12,7 +12,7 @@ A Windows OBS 33 plugin (`obs-prores`) that adds three ProRes video encoders for
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.4.2**.
+Current version: **0.5.0**.
 
 ## Layout
 
@@ -51,7 +51,8 @@ The first configure downloads OBS 33.0.0 sources and obs-deps into `.deps\` and 
 - Frame-parallel pipeline: several frames encoded at once, each on its own worker and encoder context, returned in order.
 - Automatic frames in flight is the default. It starts at half the logical CPUs and grows while the oldest frame is late, up to one worker per logical CPU. 0.4.1 also stopped growing once a worker "didn't help", which left prores_ks short on the 32-thread desktop; that rule was removed in 0.4.2.
 - Stopping costs no frames. OBS keeps feeding the encoder until a packet past the stop point arrives.
-- Overload detection reads OBS's repeated-frame counter (`video_output_get_skipped_frames`) once a second. It warns every overloaded second, writes a summary at the end, and can optionally stop the recording after 3 overloaded seconds in a row. OBS resets these counters when recordings start and stop. Since 0.4.2 the plugin banks the count and continues after a reset; 0.4.1 stopped counting, so later recordings in a session wrongly reported "no frames were repeated".
+- Overload detection (0.5.0): the plugin counts repeated frames itself, per recording. When encoding holds up OBS's video thread, OBS hands the encoder the same cached frame buffer again, so a repeat is "the same frame buffer twice in a row". It warns every overloaded second (more than 2% repeats), writes a summary at the end, and can optionally stop the recording after 3 overloaded seconds in a row. Earlier versions read OBS's shared `video_output_get_skipped_frames` counter. OBS resets that counter whenever an output connects, which made the summary wrong for later recordings in a session (0.4.1 and 0.4.2).
+- Automatic sizing toggle (0.5.0): "Grow when frames are late" (default), or "Size from measured frame cost" (experimental). The second starts at 4 workers and jumps to ceil(fps x seconds per frame x 1.25) + 1, re-evaluated at most once a second, and only ever grows.
 - Linux later: keep the code portable where practical (pthreads, libobs threading). Install paths differ.
 
 ## Test results (laptop: Core Ultra 9 185H, 16 cores / 22 threads, RTX 4070 Laptop)

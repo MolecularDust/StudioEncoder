@@ -37,12 +37,13 @@ Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 mar
 3. Video Encoder: one of the encoders above. In its settings:
    - **Profile**: Proxy, LT, 422 or HQ.
    - **Frames in flight**: 0 (automatic, recommended). Frames are encoded in parallel, one per CPU core, as needed.
+   - **Automatic sizing** (only with Frames in flight 0): *Grow when frames are late* (default) or *Size from measured frame cost* (experimental). The second starts with 4 workers, times a frame, then sets the number of workers needed in one step. That uses less memory for light encoders and ramps up faster for heavy ones. CPU load is the same either way.
    - **On overload**: *Warn in the log* or *Stop recording*.
    - **Log verbosity**: Info shows timing and automatic tuning.
 
 ## Overload
 
-If an encoder cannot keep up, OBS repeats the previous frame to keep the timeline, and the recording looks frozen in those places. The plugin reads OBS's own count of repeated frames:
+If an encoder cannot keep up, OBS repeats the previous frame to keep the timeline, and the recording looks frozen in those places. The plugin counts those repeated frames for each recording (it notices when OBS hands it the same frame twice in a row):
 - It writes an `OVERLOAD` warning to the log for every second in which that happens, and a summary when the recording ends.
 - With **On overload: Stop recording**, it ends the recording after 3 overloaded seconds in a row and shows an error.
 

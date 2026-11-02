@@ -8,6 +8,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 #if defined(_M_X64) || defined(__SSE2__)
@@ -33,6 +34,16 @@ static const int64_t profile_fourcc[] = {
 #define S_INFO "info"
 #define S_CODEC_TYPE "codec_type"
 #define S_OVERLOAD "overload_action"
+#define S_SIZING "inflight_sizing"
+
+/* How automatic frames in flight decides how many workers to use. */
+enum pr_sizing {
+	PR_SIZING_LATE = 0,     /* start at half the logical CPUs, add one worker at a time while frames are late */
+	PR_SIZING_MEASURED = 1, /* start small, then size from the measured encode time of a frame */
+};
+
+/* Measured sizing: workers needed = frames per second x seconds per frame x this margin, plus one. */
+#define PR_SIZING_MARGIN 1.25
 
 enum pr_overload_action {
 	PR_OVERLOAD_WARN = 0,
@@ -86,6 +97,8 @@ struct pr_encoder {
 	int free_list[PR_MAX_IN_FLIGHT];
 	int free_count;
 	uint64_t frames_at_last_grow;
+	int sizing;                  /* enum pr_sizing */
+	uint64_t last_sizing_ns;     /* measured sizing: last time the worker count was re-evaluated */
 	double avg_worker_ns;         /* moving average of the time one frame spends on a worker */
 	volatile bool quit;
 
@@ -102,21 +115,19 @@ struct pr_encoder {
 	uint64_t wait_ns;
 	uint64_t last_warn_ns;
 
-	/* Overload: when encoding blocks OBS's video thread for too long, OBS fills the gap by sending the last
-	 * frame again. Those repeats look like frozen video, so they are counted from OBS's own counters. */
-	video_t *video;
+	/* Overload: when encoding blocks OBS's video thread for too long, OBS fills the gap by handing the encoder
+	 * the same cached frame again (video_output_cur_frame does not advance on a repeat). Those repeats look like
+	 * frozen video. They are counted here, per recording, by noticing the same frame buffer twice in a row,
+	 * rather than from OBS's shared counters, which OBS resets whenever an output connects. */
 	int overload_action;
-	uint32_t skipped_base; /* OBS's counters when this encoder started */
-	uint32_t total_base;
-	uint32_t skipped_mark; /* counters at the start of the current one-second window */
-	uint32_t total_mark;
-	uint32_t skipped_now; /* latest counters, read on every frame */
-	uint32_t total_now;
+	const uint8_t *last_frame_data; /* plane 0 of the previous frame */
+	uint64_t frames_in;
+	uint64_t repeats_in;
+	uint64_t window_frames; /* in the current one-second window */
+	uint64_t window_repeats;
 	uint64_t window_start_ns;
 	int overloaded_seconds; /* consecutive */
 	bool stopped_for_overload;
-	uint32_t skipped_banked; /* counted before OBS last reset its counters */
-	uint32_t total_banked;
 };
 
 static void pr_log(const struct pr_encoder *enc, int level, int obs_level, const char *fmt, ...)
@@ -318,7 +329,9 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 		int cores = os_get_logical_cores();
 		enc->max_depth = cores < PR_AUTO_START_IN_FLIGHT ? PR_AUTO_START_IN_FLIGHT
 								  : (cores > PR_MAX_IN_FLIGHT ? PR_MAX_IN_FLIGHT : cores);
-		int start_depth = cores / 2;
+		enc->sizing = (int)obs_data_get_int(settings, S_SIZING);
+		/* measured sizing starts small and sizes itself once the first frames are timed */
+		int start_depth = enc->sizing == PR_SIZING_MEASURED ? PR_AUTO_START_IN_FLIGHT : cores / 2;
 		if (start_depth < PR_AUTO_START_IN_FLIGHT)
 			start_depth = PR_AUTO_START_IN_FLIGHT;
 		enc->depth = start_depth < enc->max_depth ? start_depth : enc->max_depth;
@@ -335,10 +348,7 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 	enc->frame_interval_ns = enc->params.fps_num ? (uint64_t)enc->params.fps_den * 1000000000ULL / enc->params.fps_num
 						     : 0;
 
-	enc->video = video;
 	enc->overload_action = (int)obs_data_get_int(settings, S_OVERLOAD);
-	enc->skipped_base = enc->skipped_mark = enc->skipped_now = video_output_get_skipped_frames(video);
-	enc->total_base = enc->total_mark = enc->total_now = video_output_get_total_frames(video);
 	enc->window_start_ns = os_gettime_ns();
 
 	char err[256] = "";
@@ -384,13 +394,14 @@ void pr_encoder_destroy(void *data)
 			(double)enc->wait_ns / n / 1e6, (unsigned long long)enc->over_budget,
 			(double)enc->frame_interval_ns / 1e6);
 
-		const uint32_t repeated = enc->skipped_banked + (enc->skipped_now - enc->skipped_base);
-		const uint32_t total = enc->total_banked + (enc->total_now - enc->total_base);
+		const uint64_t repeated = enc->repeats_in;
+		const uint64_t total = enc->frames_in;
 		if (repeated > 0)
 			obs_log(LOG_WARNING,
-				"%s: OVERLOAD SUMMARY: OBS repeated %u of %u frames (%.1f%%) because this encoder could not "
+				"%s: OVERLOAD SUMMARY: OBS repeated %llu of %llu frames (%.1f%%) because this encoder could not "
 				"keep up. Those parts of the recording look frozen.%s",
-				enc->backend->log_name, repeated, total, total ? 100.0 * repeated / total : 0.0,
+				enc->backend->log_name, (unsigned long long)repeated, (unsigned long long)total,
+				total ? 100.0 * (double)repeated / (double)total : 0.0,
 				enc->stopped_for_overload ? " The recording was stopped because of this." : "");
 		else
 			obs_log(LOG_INFO, "%s: no frames were repeated; the encoder kept up for the whole recording",
@@ -423,10 +434,16 @@ bool pr_encoder_update(void *data, obs_data_t *settings)
  * Wait for the previous change to take effect (a full pipeline of frames) before growing again. Growth only
  * happens while frames are late, up to one worker per logical CPU: stopping earlier left prores_ks short of
  * real time on a 32-thread CPU that could have kept up. */
+static void size_from_cost(struct pr_encoder *enc);
+
 static void maybe_grow(struct pr_encoder *enc, uint64_t waited_ns)
 {
 	if (!enc->auto_depth || enc->depth >= enc->max_depth)
 		return;
+	if (enc->sizing == PR_SIZING_MEASURED) {
+		size_from_cost(enc);
+		return;
+	}
 	if (waited_ns < enc->frame_interval_ns / 4)
 		return;
 	if (enc->frames - enc->frames_at_last_grow < (uint64_t)enc->depth)
@@ -449,32 +466,61 @@ static void maybe_grow(struct pr_encoder *enc, uint64_t waited_ns)
 	       enc->depth, (double)waited_ns / 1e6, throughput);
 }
 
-/* Reads OBS's repeat counters and, once a second, warns about (or stops on) frames OBS repeated because encoding
- * held up its video thread. The counters belong to OBS's whole video output, so another lagging output would show
- * up here too. Returns false when the recording should stop. */
-static bool check_overload(struct pr_encoder *enc, uint64_t now)
+/* Measured sizing: workers needed = frames per second x seconds one frame takes on a worker x a margin, plus one.
+ * Evaluated after the first timed frame, then at most once a second; it only ever adds workers, all at once. A
+ * slow encoder may still lag for the first fraction of a second while that first frame is timed. */
+static void size_from_cost(struct pr_encoder *enc)
 {
-	/* OBS resets these counters when an output starts or stops on its video, which can happen after this encoder
-	 * read its baseline (the next recording in the same session) or while the last frames are still encoding. A
-	 * counter going backwards means that happened: bank what was counted so far and start again from the new
-	 * readings. */
-	const uint32_t skipped_read = video_output_get_skipped_frames(enc->video);
-	const uint32_t total_read = video_output_get_total_frames(enc->video);
-	if (skipped_read < enc->skipped_now || total_read < enc->total_now) {
-		enc->skipped_banked += enc->skipped_now - enc->skipped_base;
-		enc->total_banked += enc->total_now - enc->total_base;
-		enc->skipped_base = enc->skipped_mark = skipped_read;
-		enc->total_base = enc->total_mark = total_read;
+	if (enc->avg_worker_ns <= 0.0 || !enc->params.fps_den)
+		return;
+	const uint64_t now = os_gettime_ns();
+	if (enc->last_sizing_ns && now - enc->last_sizing_ns < 1000000000ULL)
+		return;
+	enc->last_sizing_ns = now;
+
+	const double fps = (double)enc->params.fps_num / (double)enc->params.fps_den;
+	int need = (int)ceil(fps * enc->avg_worker_ns / 1e9 * PR_SIZING_MARGIN) + 1;
+	if (need > enc->max_depth)
+		need = enc->max_depth;
+	if (need <= enc->depth)
+		return;
+
+	const int old_depth = enc->depth;
+	while (enc->created < need) {
+		char err[256] = "";
+		if (!add_slot(enc, err, sizeof(err))) {
+			pr_log(enc, PR_LOG_WARNINGS, LOG_WARNING, "could not add a worker (%s); staying at %d in flight", err,
+			       enc->created);
+			enc->max_depth = enc->created;
+			break;
+		}
 	}
-	enc->skipped_now = skipped_read;
-	enc->total_now = total_read;
+	enc->depth = need < enc->created ? need : enc->created;
+	pr_log(enc, PR_LOG_INFO, LOG_INFO,
+	       "frames in flight sized from %d to %d: a frame takes %.1f ms on a worker, %.2f fps needs %d with margin",
+	       old_depth, enc->depth, enc->avg_worker_ns / 1e6, fps, need);
+}
+
+/* Counts frames OBS repeated because encoding held up its video thread (the same frame buffer handed over twice
+ * in a row) and, once a second, warns about or stops on them. Returns false when the recording should stop. */
+static bool check_overload(struct pr_encoder *enc, const struct encoder_frame *frame, uint64_t now)
+{
+	const bool repeat = enc->last_frame_data && frame->data[0] == enc->last_frame_data;
+	enc->last_frame_data = frame->data[0];
+	enc->frames_in++;
+	enc->window_frames++;
+	if (repeat) {
+		enc->repeats_in++;
+		enc->window_repeats++;
+	}
+
 	if (now - enc->window_start_ns < 1000000000ULL)
 		return true;
 
-	const uint32_t repeated = enc->skipped_now - enc->skipped_mark;
-	const uint32_t total = enc->total_now - enc->total_mark;
-	enc->skipped_mark = enc->skipped_now;
-	enc->total_mark = enc->total_now;
+	const uint64_t repeated = enc->window_repeats;
+	const uint64_t total = enc->window_frames;
+	enc->window_repeats = 0;
+	enc->window_frames = 0;
 	enc->window_start_ns = now;
 
 	if (total == 0 || (double)repeated <= (double)total * PR_OVERLOAD_SHARE) {
@@ -484,9 +530,10 @@ static bool check_overload(struct pr_encoder *enc, uint64_t now)
 
 	enc->overloaded_seconds++;
 	obs_log(LOG_WARNING,
-		"%s: OVERLOAD: OBS repeated %u of the last %u frames (%.0f%%) because encoding could not keep up; the "
+		"%s: OVERLOAD: OBS repeated %llu of the last %llu frames (%.0f%%) because encoding could not keep up; the "
 		"recording looks frozen there. Use the prores_aw encoder or a lighter profile.",
-		enc->backend->log_name, repeated, total, 100.0 * repeated / total);
+		enc->backend->log_name, (unsigned long long)repeated, (unsigned long long)total,
+		100.0 * (double)repeated / (double)total);
 
 	if (enc->overload_action == PR_OVERLOAD_STOP && enc->overloaded_seconds >= PR_OVERLOAD_STOP_SECONDS) {
 		enc->stopped_for_overload = true;
@@ -517,7 +564,7 @@ bool pr_encoder_encode(void *data, struct encoder_frame *frame, struct encoder_p
 	const uint64_t start = os_gettime_ns();
 	char err[256] = "";
 
-	if (!check_overload(enc, start))
+	if (!check_overload(enc, frame, start))
 		return false;
 
 	/* convert into a free slot, hand it to its worker and queue it behind the frames already in flight */
@@ -631,6 +678,7 @@ void pr_encoder_get_defaults(obs_data_t *settings, void *type_data)
 	obs_data_set_default_int(settings, S_IN_FLIGHT, backend->default_in_flight);
 	obs_data_set_default_int(settings, S_LOG_LEVEL, PR_LOG_WARNINGS);
 	obs_data_set_default_int(settings, S_OVERLOAD, PR_OVERLOAD_WARN);
+	obs_data_set_default_int(settings, S_SIZING, PR_SIZING_LATE);
 	obs_data_set_default_int(settings, S_CODEC_TYPE, profile_fourcc[PR_PROFILE_422]);
 	obs_data_set_default_string(settings, S_INFO, obs_module_text("Info.Text"));
 	backend->set_defaults(settings);
@@ -658,6 +706,11 @@ obs_properties_t *pr_encoder_get_properties(void *data, void *type_data)
 	obs_property_t *f =
 		obs_properties_add_int(props, S_IN_FLIGHT, obs_module_text("InFlight"), 0, PR_MAX_IN_FLIGHT, 1);
 	obs_property_set_long_description(f, obs_module_text("InFlight.Description"));
+
+	p = obs_properties_add_list(props, S_SIZING, obs_module_text("Sizing"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("Sizing.Late"), PR_SIZING_LATE);
+	obs_property_list_add_int(p, obs_module_text("Sizing.Measured"), PR_SIZING_MEASURED);
+	obs_property_set_long_description(p, obs_module_text("Sizing.Description"));
 
 	p = obs_properties_add_list(props, S_OVERLOAD, obs_module_text("Overload"), OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_INT);
