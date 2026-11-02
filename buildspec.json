@@ -24,7 +24,7 @@
     },
     "name": "obs-prores",
     "displayName": "ProRes-compatible encoders",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "author": "Mike",
     "website": "",
     "email": ""

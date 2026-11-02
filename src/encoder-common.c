@@ -87,7 +87,6 @@ struct pr_encoder {
 	int free_count;
 	uint64_t frames_at_last_grow;
 	double avg_worker_ns;         /* moving average of the time one frame spends on a worker */
-	double throughput_before_grow; /* frames per second the pipeline managed before the last growth */
 	volatile bool quit;
 
 	uint8_t *packet_buf;
@@ -116,7 +115,8 @@ struct pr_encoder {
 	uint64_t window_start_ns;
 	int overloaded_seconds; /* consecutive */
 	bool stopped_for_overload;
-	bool counters_reset; /* OBS reset its counters (video output stopped); stop reading them */
+	uint32_t skipped_banked; /* counted before OBS last reset its counters */
+	uint32_t total_banked;
 };
 
 static void pr_log(const struct pr_encoder *enc, int level, int obs_level, const char *fmt, ...)
@@ -384,8 +384,8 @@ void pr_encoder_destroy(void *data)
 			(double)enc->wait_ns / n / 1e6, (unsigned long long)enc->over_budget,
 			(double)enc->frame_interval_ns / 1e6);
 
-		const uint32_t repeated = enc->skipped_now - enc->skipped_base;
-		const uint32_t total = enc->total_now - enc->total_base;
+		const uint32_t repeated = enc->skipped_banked + (enc->skipped_now - enc->skipped_base);
+		const uint32_t total = enc->total_banked + (enc->total_now - enc->total_base);
 		if (repeated > 0)
 			obs_log(LOG_WARNING,
 				"%s: OVERLOAD SUMMARY: OBS repeated %u of %u frames (%.1f%%) because this encoder could not "
@@ -420,9 +420,9 @@ bool pr_encoder_update(void *data, obs_data_t *settings)
 }
 
 /* Automatic mode: when the oldest frame was still encoding as its turn came, allow one more frame in flight.
- * Wait for the previous change to take effect (a full pipeline of frames) before growing again, and stop
- * growing once another worker no longer raises throughput: then the CPU is saturated and more frames in
- * flight would only make each one slower. */
+ * Wait for the previous change to take effect (a full pipeline of frames) before growing again. Growth only
+ * happens while frames are late, up to one worker per logical CPU: stopping earlier left prores_ks short of
+ * real time on a 32-thread CPU that could have kept up. */
 static void maybe_grow(struct pr_encoder *enc, uint64_t waited_ns)
 {
 	if (!enc->auto_depth || enc->depth >= enc->max_depth)
@@ -433,14 +433,6 @@ static void maybe_grow(struct pr_encoder *enc, uint64_t waited_ns)
 		return;
 
 	const double throughput = enc->avg_worker_ns > 0.0 ? (double)enc->depth * 1e9 / enc->avg_worker_ns : 0.0;
-	if (enc->throughput_before_grow > 0.0 && throughput < enc->throughput_before_grow * 1.05) {
-		enc->max_depth = enc->depth;
-		pr_log(enc, PR_LOG_INFO, LOG_INFO,
-		       "frames in flight settled at %d: one more worker did not raise throughput (%.1f fps), the CPU is "
-		       "saturated",
-		       enc->depth, throughput);
-		return;
-	}
 
 	if (enc->created <= enc->depth) {
 		char err[256] = "";
@@ -451,7 +443,6 @@ static void maybe_grow(struct pr_encoder *enc, uint64_t waited_ns)
 			return;
 		}
 	}
-	enc->throughput_before_grow = throughput;
 	enc->depth++;
 	enc->frames_at_last_grow = enc->frames;
 	pr_log(enc, PR_LOG_INFO, LOG_INFO, "frames in flight raised to %d (oldest frame waited %.1f ms, %.1f fps)",
@@ -463,15 +454,17 @@ static void maybe_grow(struct pr_encoder *enc, uint64_t waited_ns)
  * up here too. Returns false when the recording should stop. */
 static bool check_overload(struct pr_encoder *enc, uint64_t now)
 {
-	/* OBS resets these counters when its video output stops, which can happen while the last frames are still
-	 * being encoded. A counter going backwards means that happened: keep the last good readings. */
-	if (enc->counters_reset)
-		return true;
+	/* OBS resets these counters when an output starts or stops on its video, which can happen after this encoder
+	 * read its baseline (the next recording in the same session) or while the last frames are still encoding. A
+	 * counter going backwards means that happened: bank what was counted so far and start again from the new
+	 * readings. */
 	const uint32_t skipped_read = video_output_get_skipped_frames(enc->video);
 	const uint32_t total_read = video_output_get_total_frames(enc->video);
 	if (skipped_read < enc->skipped_now || total_read < enc->total_now) {
-		enc->counters_reset = true;
-		return true;
+		enc->skipped_banked += enc->skipped_now - enc->skipped_base;
+		enc->total_banked += enc->total_now - enc->total_base;
+		enc->skipped_base = enc->skipped_mark = skipped_read;
+		enc->total_base = enc->total_mark = total_read;
 	}
 	enc->skipped_now = skipped_read;
 	enc->total_now = total_read;

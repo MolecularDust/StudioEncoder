@@ -12,7 +12,7 @@ A Windows OBS 33 plugin (`obs-prores`) that adds three ProRes video encoders for
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.4.1**.
+Current version: **0.4.2**.
 
 ## Layout
 
@@ -49,9 +49,9 @@ The first configure downloads OBS 33.0.0 sources and obs-deps into `.deps\` and 
 - Input format P216. OBS 33 has no P210 or I210 output. Conversion is (v + 32) >> 6 per sample with SSE2.
 - The muxer gets the FourCC through the encoder setting `codec_type`, as a big-endian integer. The encoder must return true from `get_extra_data`, or obs-ffmpeg-mux silently drops every packet.
 - Frame-parallel pipeline: several frames encoded at once, each on its own worker and encoder context, returned in order.
-- Automatic frames in flight is the default. It starts at half the logical CPUs, grows while the oldest frame is late, and stops when another worker no longer raises throughput.
+- Automatic frames in flight is the default. It starts at half the logical CPUs and grows while the oldest frame is late, up to one worker per logical CPU. 0.4.1 also stopped growing once a worker "didn't help", which left prores_ks short on the 32-thread desktop; that rule was removed in 0.4.2.
 - Stopping costs no frames. OBS keeps feeding the encoder until a packet past the stop point arrives.
-- Overload detection reads OBS's repeated-frame counter (`video_output_get_skipped_frames`) once a second. It warns every overloaded second, writes a summary at the end, and can optionally stop the recording after 3 overloaded seconds in a row.
+- Overload detection reads OBS's repeated-frame counter (`video_output_get_skipped_frames`) once a second. It warns every overloaded second, writes a summary at the end, and can optionally stop the recording after 3 overloaded seconds in a row. OBS resets these counters when recordings start and stop. Since 0.4.2 the plugin banks the count and continues after a reset; 0.4.1 stopped counting, so later recordings in a session wrongly reported "no frames were repeated".
 - Linux later: keep the code portable where practical (pthreads, libobs threading). Install paths differ.
 
 ## Test results (laptop: Core Ultra 9 185H, 16 cores / 22 threads, RTX 4070 Laptop)
@@ -64,9 +64,19 @@ Setup: real 4K capture (AverMedia Live Gamer Ultra 2.1), OBS 33.0.1 portable, St
 - The Custom Output "non monotonically increasing dts" error (stale packets after a quick restart) never appeared with the plugin.
 - Files open in DaVinci Resolve. Premiere is not tested yet.
 
+## Test results (desktop: Ryzen 9 9950X3D, 16 cores / 32 threads, RTX 5080)
+
+Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, plugin 0.4.1, 4K 29.97, 422.
+
+- **prores_aw**: keeps up. OBS thread 2.2 ms per frame; about 8% CPU.
+- **Rust**: keeps up. OBS thread 2.5 ms per frame; about 22% CPU.
+- **prores_ks**: overloaded under 0.4.1 (OBS reported 88.8% skipped; growth had stopped at 17 workers). OBS's own Custom Output prores_ks kept up on this machine at 67% CPU. Re-test with 0.4.2.
+- Every desktop file, from any encoder and from Custom Output alike, has about 17–18% single-frame repeats (a repeat every 5–6 frames, about 24.7 unique fps). That comes from the camera signal, not the encoders: it looks like a 25p feed into a 29.97 canvas. Fix it at the camera (29.97p) or in OBS (25 fps).
+- A fragmented MOV (Custom Muxer Settings `movflags=frag_keyframe+empty_moov+delay_moov`) froze Resolve on the timeline. Regular MOV is fine. The fragmented setting was a profile setting on that machine, not something the plugin sets.
+
 ## Open items
 
-1. **Desktop (Ryzen 9950X3D, 32 threads, RTX 5080)**: system-wide OBS 33 install. Put the plugin in `C:\ProgramData\obs-studio\plugins\obs-prores\`. It wasn't loading at the time of this handoff. Check the OBS version, check whether the log says "Portable mode: true", and search the log for `obs-prores`. Then run all three encoders at 422 (and HQ) to see whether Rust and prores_ks keep up there.
+1. **Desktop**: install 0.4.2 and re-test prores_ks; the plugin now grows to 32 workers. Fix the camera frame-rate mismatch, then re-check AW for repeats.
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
 4. Linux build: not started.
