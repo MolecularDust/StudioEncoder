@@ -1,0 +1,10 @@
+[package]
+name = "prores-bench"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+# FilmCraft ProRes crate, pinned to a reviewed commit (MIT OR Apache-2.0)
+filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "68919ed87aa6a097a4d21414ec7c438883f5fe22" }
+rayon = "1"

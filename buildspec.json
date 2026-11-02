@@ -1,0 +1,31 @@
+﻿{
+    "dependencies": {
+        "obs-studio": {
+            "version": "33.0.0",
+            "baseUrl": "https://github.com/obsproject/obs-studio/archive/refs/tags",
+            "label": "OBS sources",
+            "hashes": {
+                "windows-x64": "bdab14146289f39be6c12d5165812ba5b37b5231f857cb84aa5e4bafeaaa8686"
+            }
+        },
+        "prebuilt": {
+            "version": "2026-10-23",
+            "baseUrl": "https://github.com/obsproject/obs-deps/releases/download",
+            "label": "Pre-Built obs-deps",
+            "hashes": {
+                "windows-x64": "7508972a867a0ef68c26cd8bdba61fd999edd0a92fa9eb9585774de9bf51bfbe"
+            }
+        }
+    },
+    "platformConfig": {
+        "macos": {
+            "bundleId": "com.example.obs-prores"
+        }
+    },
+    "name": "obs-prores",
+    "displayName": "ProRes-compatible encoders",
+    "version": "0.4.1",
+    "author": "Mike",
+    "website": "",
+    "email": ""
+}

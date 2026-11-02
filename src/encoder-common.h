@@ -1,0 +1,89 @@
+#pragma once
+
+#include <obs-module.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+enum pr_profile {
+	PR_PROFILE_PROXY = 0,
+	PR_PROFILE_LT = 1,
+	PR_PROFILE_422 = 2,
+	PR_PROFILE_HQ = 3,
+};
+
+enum pr_log_level {
+	PR_LOG_ERRORS = 0,
+	PR_LOG_WARNINGS = 1,
+	PR_LOG_INFO = 2,
+	PR_LOG_DEBUG = 3,
+};
+
+/* Everything a backend needs to build its encoder. Colour values are H.273 codes. */
+struct pr_params {
+	enum pr_profile profile;
+	int threads;   /* 0 = automatic; slice threads when only one frame is in flight */
+	int in_flight; /* frames encoded in parallel */
+	int qscale;    /* 0 = profile default (prores_ks only) */
+	bool vendor_apl0;
+	int log_level;
+	const char *codec_name; /* FFmpeg encoder name, or NULL for the Rust backend */
+	uint32_t width;
+	uint32_t height;
+	uint32_t fps_num;
+	uint32_t fps_den;
+	uint8_t color_primaries;
+	uint8_t color_transfer;
+	uint8_t color_matrix;
+	bool full_range;
+};
+
+/* Planar 10-bit 4:2:2 destination buffers owned by a backend context. Strides are in samples. */
+struct pr_planes {
+	uint16_t *y;
+	uint16_t *cb;
+	uint16_t *cr;
+	size_t y_stride;
+	size_t c_stride;
+};
+
+struct pr_backend {
+	const char *name_key;   /* locale key for the encoder name */
+	const char *log_name;   /* short name used in log lines */
+	const char *codec_name; /* FFmpeg encoder name, or NULL */
+	int default_in_flight;
+
+	/* One context is created per frame in flight; each is used by one worker thread at a time. */
+	void *(*create)(const struct pr_params *params, char *err, size_t err_len);
+	/* Returns writable destination planes for the next frame (called on the OBS encode thread). */
+	bool (*get_planes)(void *ctx, struct pr_planes *planes, char *err, size_t err_len);
+	/* Encodes the planes filled after get_planes() (called on a worker thread). */
+	bool (*encode)(void *ctx, uint8_t *out, size_t out_cap, size_t *out_size, char *err, size_t err_len);
+	void (*destroy)(void *ctx);
+	void (*add_properties)(obs_properties_t *props);
+	void (*set_defaults)(obs_data_t *settings);
+};
+
+/* Shared encoder plumbing used by all backends. */
+void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, obs_encoder_t *encoder);
+void pr_encoder_destroy(void *data);
+bool pr_encoder_update(void *data, obs_data_t *settings);
+bool pr_encoder_get_extra_data(void *data, uint8_t **extra_data, size_t *size);
+bool pr_encoder_encode(void *data, struct encoder_frame *frame, struct encoder_packet *packet, bool *received_packet);
+const char *pr_encoder_get_name(void *type_data);
+void pr_encoder_get_defaults(obs_data_t *settings, void *type_data);
+obs_properties_t *pr_encoder_get_properties(void *data, void *type_data);
+
+/* P216 (OBS output, 10-bit values in the top bits of 16-bit words, interleaved UV) to planar 10-bit.
+ * Destination strides are in samples. */
+void pr_p216_to_planar10(const uint8_t *src_y, size_t src_y_stride, const uint8_t *src_uv, size_t src_uv_stride,
+			 uint32_t width, uint32_t height, uint16_t *dst_y, size_t dst_y_stride, uint16_t *dst_cb,
+			 uint16_t *dst_cr, size_t dst_c_stride);
+
+#ifdef __cplusplus
+}
+#endif

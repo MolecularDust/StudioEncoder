@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OBS ProRes encoder settings mockup</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --text: #1d1d22; --muted: #6b6b76;
+    --line: #d9d9e0; --accent: #3d7bd9; --rust: #b5572a; --ffm: #2f7d5b; --warn: #a06a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1b1f; --panel: #26262c; --text: #ececf1; --muted: #9a9aa6;
+      --line: #3a3a44; --accent: #6d9fef; --rust: #e08a5e; --ffm: #5fbf94; --warn: #e0b35a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1b1f; --panel: #26262c; --text: #ececf1; --muted: #9a9aa6;
+    --line: #3a3a44; --accent: #6d9fef; --rust: #e08a5e; --ffm: #5fbf94; --warn: #e0b35a;
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 8px 0 4px; }
+  .note { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; color: #fff; }
+  .tag.rust { background: var(--rust); }
+  .tag.ffm { background: var(--ffm); }
+  .tag.shared { background: var(--muted); }
+  .row { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .label { color: var(--text); }
+  .hint { color: var(--muted); font-size: 12px; }
+  select, input[type=number], input[type=text] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font: inherit; max-width: 100%;
+  }
+  input[type=range] { width: 100%; }
+  .checks label { display: block; margin: 2px 0; }
+  .info { background: var(--bg); border-left: 3px solid var(--warn); padding: 8px 10px; border-radius: 4px; font-size: 13px; }
+  .fourcc { font-family: Consolas, monospace; background: var(--bg); padding: 1px 6px; border-radius: 3px; }
+  .disabled { opacity: 0.45; }
+  @media (max-width: 520px) { .row { grid-template-columns: 1fr; gap: 4px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Settings → Output → Recording (Advanced, Type: Standard)</h1>
+  <div class="note">Mockup. Controls shown are only ones OBS can render from <code>obs_properties_t</code>. Tags show which backend each control belongs to.</div>
+
+  <div class="panel">
+    <h2>Video encoder</h2>
+    <div class="row">
+      <div class="label">Encoder</div>
+      <div>
+        <select>
+          <option>ProRes-compatible (Rust / FilmCraft)</option>
+          <option>ProRes (FFmpeg prores_ks)</option>
+          <option>x264 / NVENC / other OBS encoders…</option>
+        </select>
+        <div class="hint">Both plugin entries are unofficial and not Apple ProRes.</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">Recording format</div>
+      <div>
+        <select><option>mov</option><option>mkv</option></select>
+        <div class="hint">Hybrid MOV is a stretch goal, tested separately.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Encoder settings <span class="tag rust">Rust</span> <span class="tag ffm">FFmpeg</span> <span class="tag shared">shared</span></h2>
+
+    <div class="row">
+      <div class="label">Required input <span class="tag shared">shared</span></div>
+      <div class="info">
+        Settings → Advanced → Color Format: <b>P216</b> (16-bit, 4:2:2)<br>
+        Color Space: <b>Rec. 709</b> · Color Range: <b>Limited</b><br>
+        <span class="hint">I210 is not an OBS 33 output format, so P216 is the only 10-bit 4:2:2 option.</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Profile <span class="tag shared">shared</span></div>
+      <div>
+        <select>
+          <option>Proxy (apco)</option>
+          <option>LT (apcs)</option>
+          <option selected>422 (apcn)</option>
+          <option>HQ (apch)</option>
+        </select>
+        <div class="hint">Sets the container FourCC written to <span class="fourcc">codec_type</span>.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Quality <span class="tag rust">Rust</span></div>
+      <div>
+        <input type="range" min="0" max="100" value="60"> <span class="hint">Quality preset (0 = smallest, 100 = best). Exact mapping TBD in Phase 1.</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Quality (qscale) <span class="tag ffm">FFmpeg</span></div>
+      <div>
+        <input type="number" min="1" max="31" value="9" step="1"> <span class="hint">prores_ks uses qscale rate control; bitrate is ignored.</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Vendor ID <span class="tag ffm">FFmpeg</span></div>
+      <div>
+        <select>
+          <option selected>apl0 (Apple-compatible tag)</option>
+          <option>FFmpeg default</option>
+        </select>
+        <div class="hint">Phase 1 test decides whether apl0 is needed for Resolve and Premiere.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Worker threads <span class="tag shared">shared</span></div>
+      <div>
+        <input type="number" min="1" max="64" value="8"> <span class="hint">Default = logical cores on this machine.</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Frames in flight <span class="tag shared">shared</span></div>
+      <div>
+        <input type="number" min="1" max="16" value="4">
+        <span class="hint">Higher uses more RAM (about 33 MB per 4K P216 frame).</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">When encoder falls behind <span class="tag shared">shared</span></div>
+      <div>
+        <select><option selected>Drop frame and log</option><option>Block render thread</option></select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Colour tags written <span class="tag shared">shared</span></div>
+      <div class="checks">
+        <label><input type="checkbox" checked> colr atom (primaries, transfer, matrix)</label>
+        <label><input type="checkbox" checked> Write BT.709 tags when OBS is Rec. 709</label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Log verbosity <span class="tag shared">shared</span></div>
+      <div>
+        <select><option>Errors</option><option selected>Warnings</option><option>Info</option><option>Debug (per frame)</option></select>
+      </div>
+    </div>
+
+    <div class="row disabled">
+      <div class="label">Rust backend version <span class="tag rust">Rust</span></div>
+      <div><input type="text" value="FilmCraft git commit (pinned)" disabled> <span class="hint">Read-only, set at build time.</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Mock status line</h2>
+    <div class="info">
+      Encoder active: <b>ProRes (FFmpeg prores_ks)</b> · 3840×2160 · P216 · 30 fps · 422 (apcn) · 4 frames in flight<br>
+      <span class="hint">Shown in the OBS log on start, not in the UI.</span>
+    </div>
+  </div>
+</main>
+</body>
+</html>
