@@ -1,6 +1,8 @@
 #include "encoder-common.h"
 #include "prores-aw.h"
 
+#include <plugin-support.h>
+
 #include <util/bmem.h>
 
 #include <stdio.h>
@@ -41,6 +43,11 @@ static void *awp_create(const struct pr_params *p, char *err, size_t err_len)
 		snprintf(err, err_len, "unsupported frame size %ux%u or profile", p->width, p->height);
 		awp_destroy(c);
 		return NULL;
+	}
+	static bool logged = false;
+	if (!logged) {
+		obs_log(LOG_INFO, "aw+: DCT uses %s", pa_simd_active() ? "AVX2" : "plain C (no AVX2 on this CPU)");
+		logged = true;
 	}
 	const size_t luma = (size_t)p->width * p->height;
 	const size_t chroma = (size_t)(p->width / 2) * p->height;

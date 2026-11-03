@@ -5,10 +5,17 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 int main(int argc, char **argv)
 {
+	if (argc == 3 && strcmp(argv[1], "selftest") == 0) {
+		const long n = atol(argv[2]);
+		const long bad = pa_selftest_simd(n);
+		printf("AVX2 vs C DCT: %ld blocks, %ld mismatches\n", n, bad);
+		return bad == 0 ? 0 : 1;
+	}
 	if (argc != 8) {
 		fprintf(stderr, "usage: %s in.yuv w h frames profile round8 out.bin\n", argv[0]);
 		return 2;
@@ -23,6 +30,9 @@ int main(int argc, char **argv)
 	const size_t cap = pa_max_frame_size(w, h);
 	uint8_t *pkt = malloc(cap);
 	struct pa_ctx *ctx = pa_create(w, h, profile, round8, "apl0", 2, 2, 2);
+	if (getenv("PA_NO_SIMD"))
+		pa_set_simd(0);
+	fprintf(stderr, "DCT: %s\n", pa_simd_active() ? "AVX2" : "C");
 	if (!frame || !pkt || !ctx)
 		return 1;
 	double secs = 0;

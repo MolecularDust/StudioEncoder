@@ -354,13 +354,209 @@ static void fdct_10(int16_t *data)
 	}
 }
 
-/* copy an 8x8 block of 10-bit samples and transform it */
-static inline void fdct_get(const uint16_t *src, size_t stride, int16_t *block)
+/* copy an 8x8 block of 10-bit samples and transform it (plain C) */
+static void fdct_get_c(const uint16_t *src, size_t stride, int16_t *block)
 {
 	for (int r = 0; r < 8; r++, src += stride, block += 8)
 		for (int c = 0; c < 8; c++)
 			block[c] = (int16_t)src[c];
 	fdct_10(block - 64);
+}
+
+/* ---- the same forward DCT with AVX2: eight rows (then eight columns) at once in 32-bit lanes ----
+ * Every step is the integer operation fdct_10 performs: 32-bit wrapping adds and multiplies, arithmetic shifts,
+ * and truncation to 16 bits where fdct_10 stores into int16_t. The result is bit-identical (pa_selftest_simd). */
+
+#if defined(_M_X64) || defined(__x86_64__)
+#define PA_HAVE_AVX2 1
+#include <immintrin.h>
+
+#if defined(__GNUC__) || defined(__clang__)
+#define PA_AVX2_FN __attribute__((target("avx2")))
+#include <cpuid.h>
+#else
+#define PA_AVX2_FN
+#endif
+
+/* 8x8 transpose of 16-bit values: on return r[k] holds column k */
+#define PA_TRANSPOSE8(r)                                                         \
+	do {                                                                     \
+		const __m128i a0 = _mm_unpacklo_epi16(r[0], r[1]);               \
+		const __m128i a1 = _mm_unpackhi_epi16(r[0], r[1]);               \
+		const __m128i a2 = _mm_unpacklo_epi16(r[2], r[3]);               \
+		const __m128i a3 = _mm_unpackhi_epi16(r[2], r[3]);               \
+		const __m128i a4 = _mm_unpacklo_epi16(r[4], r[5]);               \
+		const __m128i a5 = _mm_unpackhi_epi16(r[4], r[5]);               \
+		const __m128i a6 = _mm_unpacklo_epi16(r[6], r[7]);               \
+		const __m128i a7 = _mm_unpackhi_epi16(r[6], r[7]);               \
+		const __m128i b0 = _mm_unpacklo_epi32(a0, a2);                   \
+		const __m128i b1 = _mm_unpackhi_epi32(a0, a2);                   \
+		const __m128i b2 = _mm_unpacklo_epi32(a1, a3);                   \
+		const __m128i b3 = _mm_unpackhi_epi32(a1, a3);                   \
+		const __m128i b4 = _mm_unpacklo_epi32(a4, a6);                   \
+		const __m128i b5 = _mm_unpackhi_epi32(a4, a6);                   \
+		const __m128i b6 = _mm_unpacklo_epi32(a5, a7);                   \
+		const __m128i b7 = _mm_unpackhi_epi32(a5, a7);                   \
+		r[0] = _mm_unpacklo_epi64(b0, b4);                               \
+		r[1] = _mm_unpackhi_epi64(b0, b4);                               \
+		r[2] = _mm_unpacklo_epi64(b1, b5);                               \
+		r[3] = _mm_unpackhi_epi64(b1, b5);                               \
+		r[4] = _mm_unpacklo_epi64(b2, b6);                               \
+		r[5] = _mm_unpackhi_epi64(b2, b6);                               \
+		r[6] = _mm_unpacklo_epi64(b3, b7);                               \
+		r[7] = _mm_unpackhi_epi64(b3, b7);                               \
+	} while (0)
+
+#define PA_MUL(v, k) _mm256_mullo_epi32((v), _mm256_set1_epi32(k))
+#define PA_DESCALE(v, n) _mm256_srai_epi32(_mm256_add_epi32((v), _mm256_set1_epi32(1 << ((n)-1))), (n))
+
+/* one pass of the LL&M DCT over eight independent lines held in v[0..7] (lane = line); first = row pass */
+static PA_AVX2_FN inline void pa_pass_avx2(__m256i v[8], __m128i out[8], int first)
+{
+	const __m256i tmp0 = _mm256_add_epi32(v[0], v[7]);
+	const __m256i tmp7 = _mm256_sub_epi32(v[0], v[7]);
+	const __m256i tmp1 = _mm256_add_epi32(v[1], v[6]);
+	const __m256i tmp6 = _mm256_sub_epi32(v[1], v[6]);
+	const __m256i tmp2 = _mm256_add_epi32(v[2], v[5]);
+	const __m256i tmp5 = _mm256_sub_epi32(v[2], v[5]);
+	const __m256i tmp3 = _mm256_add_epi32(v[3], v[4]);
+	const __m256i tmp4 = _mm256_sub_epi32(v[3], v[4]);
+	const __m256i tmp10 = _mm256_add_epi32(tmp0, tmp3);
+	const __m256i tmp13 = _mm256_sub_epi32(tmp0, tmp3);
+	const __m256i tmp11 = _mm256_add_epi32(tmp1, tmp2);
+	const __m256i tmp12 = _mm256_sub_epi32(tmp1, tmp2);
+	__m256i o[8];
+
+	if (first) { /* row pass: scale up by 2^PASS1_BITS, descale odd/rotated terms by CONST_BITS - PASS1_BITS */
+		o[0] = _mm256_slli_epi32(_mm256_add_epi32(tmp10, tmp11), PASS1_BITS);
+		o[4] = _mm256_slli_epi32(_mm256_sub_epi32(tmp10, tmp11), PASS1_BITS);
+	} else { /* column pass: descale by OUT_SHIFT */
+		o[0] = PA_DESCALE(_mm256_add_epi32(tmp10, tmp11), OUT_SHIFT);
+		o[4] = PA_DESCALE(_mm256_sub_epi32(tmp10, tmp11), OUT_SHIFT);
+	}
+	const int sh = first ? CONST_BITS - PASS1_BITS : CONST_BITS + OUT_SHIFT;
+	const __m256i rnd = _mm256_set1_epi32(1 << (sh - 1));
+	const __m128i shc = _mm_cvtsi32_si128(sh);
+#define PA_DS(x) _mm256_sra_epi32(_mm256_add_epi32((x), rnd), shc)
+
+	__m256i z1 = PA_MUL(_mm256_add_epi32(tmp12, tmp13), FIX_0_541196100);
+	o[2] = PA_DS(_mm256_add_epi32(z1, PA_MUL(tmp13, FIX_0_765366865)));
+	o[6] = PA_DS(_mm256_add_epi32(z1, PA_MUL(tmp12, -FIX_1_847759065)));
+
+	z1 = _mm256_add_epi32(tmp4, tmp7);
+	__m256i z2 = _mm256_add_epi32(tmp5, tmp6);
+	__m256i z3 = _mm256_add_epi32(tmp4, tmp6);
+	__m256i z4 = _mm256_add_epi32(tmp5, tmp7);
+	const __m256i z5 = PA_MUL(_mm256_add_epi32(z3, z4), FIX_1_175875602);
+	const __m256i t4 = PA_MUL(tmp4, FIX_0_298631336);
+	const __m256i t5 = PA_MUL(tmp5, FIX_2_053119869);
+	const __m256i t6 = PA_MUL(tmp6, FIX_3_072711026);
+	const __m256i t7 = PA_MUL(tmp7, FIX_1_501321110);
+	z1 = PA_MUL(z1, -FIX_0_899976223);
+	z2 = PA_MUL(z2, -FIX_2_562915447);
+	z3 = _mm256_add_epi32(PA_MUL(z3, -FIX_1_961570560), z5);
+	z4 = _mm256_add_epi32(PA_MUL(z4, -FIX_0_390180644), z5);
+	o[7] = PA_DS(_mm256_add_epi32(_mm256_add_epi32(t4, z1), z3));
+	o[5] = PA_DS(_mm256_add_epi32(_mm256_add_epi32(t5, z2), z4));
+	o[3] = PA_DS(_mm256_add_epi32(_mm256_add_epi32(t6, z2), z3));
+	o[1] = PA_DS(_mm256_add_epi32(_mm256_add_epi32(t7, z1), z4));
+#undef PA_DS
+
+	/* store as int16_t like fdct_10 does: keep the low 16 bits, sign-extended, then pack (no saturation left) */
+	for (int k = 0; k < 8; k++) {
+		const __m256i w = _mm256_srai_epi32(_mm256_slli_epi32(o[k], 16), 16);
+		out[k] = _mm_packs_epi32(_mm256_castsi256_si128(w), _mm256_extracti128_si256(w, 1));
+	}
+}
+
+static PA_AVX2_FN void fdct_get_avx2(const uint16_t *src, size_t stride, int16_t *block)
+{
+	__m128i r[8];
+	__m256i v[8];
+	for (int k = 0; k < 8; k++)
+		r[k] = _mm_loadu_si128((const __m128i *)(src + k * stride)); /* 10-bit samples: same bits as int16 */
+
+	PA_TRANSPOSE8(r); /* r[k] = element k of every row: one row per lane */
+	for (int k = 0; k < 8; k++)
+		v[k] = _mm256_cvtepi16_epi32(r[k]);
+	pa_pass_avx2(v, r, 1); /* r[k] = row-pass output k of every row */
+
+	PA_TRANSPOSE8(r); /* r[k] = row k of the intermediate block: one column per lane */
+	for (int k = 0; k < 8; k++)
+		v[k] = _mm256_cvtepi16_epi32(r[k]);
+	pa_pass_avx2(v, r, 0); /* r[k] = output row k */
+
+	for (int k = 0; k < 8; k++)
+		_mm_storeu_si128((__m128i *)(block + 8 * k), r[k]);
+}
+
+static int cpu_has_avx2(void)
+{
+#if defined(_MSC_VER)
+	int info[4];
+	__cpuid(info, 0);
+	if (info[0] < 7)
+		return 0;
+	__cpuid(info, 1);
+	const int osxsave = (info[2] >> 27) & 1, avx = (info[2] >> 28) & 1;
+	if (!osxsave || !avx || (_xgetbv(0) & 6) != 6)
+		return 0;
+	__cpuidex(info, 7, 0);
+	return (info[1] >> 5) & 1;
+#else
+	return __builtin_cpu_supports("avx2");
+#endif
+}
+#endif /* x86-64 */
+
+typedef void (*fdct_get_fn)(const uint16_t *src, size_t stride, int16_t *block);
+static fdct_get_fn fdct_get = fdct_get_c;
+
+void pa_set_simd(int enable)
+{
+#ifdef PA_HAVE_AVX2
+	fdct_get = (enable && cpu_has_avx2()) ? fdct_get_avx2 : fdct_get_c;
+#else
+	(void)enable;
+	fdct_get = fdct_get_c;
+#endif
+}
+
+int pa_simd_active(void)
+{
+	return fdct_get != fdct_get_c;
+}
+
+long pa_selftest_simd(long blocks)
+{
+#ifdef PA_HAVE_AVX2
+	if (!cpu_has_avx2())
+		return -1;
+	uint16_t src[64];
+	int16_t a[64], b[64];
+	uint32_t seed = 12345;
+	long mismatches = 0;
+	for (long n = 0; n < blocks; n++) {
+		const int mode = (int)(n % 4);
+		for (int i = 0; i < 64; i++) {
+			seed = seed * 1664525u + 1013904223u;
+			const unsigned r = seed >> 16;
+			/* random 10-bit values, plus extremes and checkerboards that drive every term to its limit */
+			src[i] = (uint16_t)(mode == 0   ? (r & 1023)
+					    : mode == 1 ? ((r & 1) ? 1023 : 0)
+					    : mode == 2 ? ((((i >> 3) + i) & 1) ? 1023 : 0)
+							: (r % 3 == 0 ? 1023 : (r % 3 == 1 ? 0 : 512)));
+		}
+		fdct_get_c(src, 8, a);
+		fdct_get_avx2(src, 8, b);
+		if (memcmp(a, b, sizeof(a)) != 0)
+			mismatches++;
+	}
+	return mismatches;
+#else
+	(void)blocks;
+	return -1;
+#endif
 }
 
 static void calc_plane_dct(const uint16_t *src, int16_t *blocks, size_t stride, int mb_count, int chroma)
@@ -559,6 +755,12 @@ struct pa_ctx *pa_create(int width, int height, int profile, int round8, const c
 	if (width <= 0 || height <= 0 || (width & 1) || width > 65534 || height > 65535 || profile < 0 || profile > 3 ||
 	    round8 < 0 || round8 > 7 || !vendor || strlen(vendor) != 4)
 		return NULL;
+
+	static int simd_ready = 0;
+	if (!simd_ready) { /* pick the DCT once: AVX2 when the CPU has it */
+		pa_set_simd(1);
+		simd_ready = 1;
+	}
 
 	struct pa_ctx *c = calloc(1, sizeof(*c));
 	if (!c)
