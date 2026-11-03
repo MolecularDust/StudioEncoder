@@ -14,6 +14,8 @@ param(
   [string]$Clip = "",                         # optional video file to loop as the source instead of a flat colour
   [string]$ColorFormat = 'P216',            # OBS output colour format
   [string]$EncoderJson = '',                # raw recordEncoder.json content; replaces the plugin settings
+  [switch]$NoRecord,                        # measure the idle load of the scene only
+  [int]$CpuSettle = 8,                       # seconds before the CPU window starts
   [string]$ObsDir = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -83,8 +85,22 @@ SceneCollectionFile=ProResTest
 "@ | Set-Content (Join-Path $cfg 'user.ini') -Encoding utf8
 
 $bin = Join-Path $ObsDir 'bin\64bit'
-$p = Start-Process -FilePath (Join-Path $bin 'obs64.exe') -WorkingDirectory $bin -ArgumentList '--disable-shutdown-check', '--startrecording' -PassThru
-Start-Sleep -Seconds $Seconds
+$obsArgs = @('--disable-shutdown-check'); if (-not $NoRecord) { $obsArgs += '--startrecording' }
+$p = Start-Process -FilePath (Join-Path $bin 'obs64.exe') -WorkingDirectory $bin -ArgumentList $obsArgs -PassThru
+Start-Sleep -Seconds $CpuSettle
+$p.Refresh(); $cpu0 = $p.TotalProcessorTime; $t0 = Get-Date
+Start-Sleep -Seconds ([Math]::Max(1, $Seconds - $CpuSettle - 1))
+$p.Refresh(); $cpu1 = $p.TotalProcessorTime; $t1 = Get-Date
+$cores = [Environment]::ProcessorCount
+$cpuPct = ($cpu1 - $cpu0).TotalSeconds / (($t1 - $t0).TotalSeconds * $cores) * 100
+"OBS CPU: {0:N1}% of {1} threads over {2:N0} s" -f $cpuPct, $cores, ($t1 - $t0).TotalSeconds
+Start-Sleep -Seconds 1
+if ($NoRecord) {
+  $null = $p.CloseMainWindow(); $null = $p.WaitForExit(30000)
+  if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+  Get-ChildItem $cfg -Force | Where-Object { $_.Name -like ".sentinel*" } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+  return
+}
 $p.Refresh()
 $win = [System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
 $btnCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
