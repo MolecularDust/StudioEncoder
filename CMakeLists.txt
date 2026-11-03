@@ -44,3 +44,7 @@ target_sources(
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+# Plugin Manager metadata (Tools > Plugin Manager reads the version from data/manifest.json).
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/manifest.json.in" "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" DESTINATION "${CMAKE_PROJECT_NAME}/data" COMPONENT Runtime)
