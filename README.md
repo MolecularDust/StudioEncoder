@@ -11,7 +11,7 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders to **
 | ProRes (FFmpeg prores_aw, fast) | FFmpeg `prores_aw` | **Recommended.** Light on CPU; real-time 4K30 on a laptop CPU at LT, 422 and HQ. |
 | ProRes (FFmpeg prores_ks) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
 | ProRes-compatible (Rust / FilmCraft) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
-| ProRes (OxideAV, pure Rust) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Light on CPU like prores_aw (about 70 fps at 4K on a 22-thread laptop with frames in parallel). File sizes between prores_aw and Apple: about 328 Mbit/s at 422. Very young code (0.1). |
+| ProRes (OxideAV, pure Rust) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
 | H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
