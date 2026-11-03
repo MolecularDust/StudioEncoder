@@ -12,7 +12,7 @@ A Windows OBS 33 plugin (`obs-prores`) that adds three ProRes video encoders for
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.5.0**.
+Current version: **0.6.0**.
 
 ## Layout
 
@@ -53,6 +53,7 @@ The first configure downloads OBS 33.0.0 sources and obs-deps into `.deps\` and 
 - Stopping costs no frames. OBS keeps feeding the encoder until a packet past the stop point arrives.
 - Overload detection (0.5.0): the plugin counts repeated frames itself, per recording. When encoding holds up OBS's video thread, OBS hands the encoder the same cached frame buffer again, so a repeat is "the same frame buffer twice in a row". It warns every overloaded second (more than 2% repeats), writes a summary at the end, and can optionally stop the recording after 3 overloaded seconds in a row. Earlier versions read OBS's shared `video_output_get_skipped_frames` counter. OBS resets that counter whenever an output connects, which made the summary wrong for later recordings in a session (0.4.1 and 0.4.2).
 - Automatic sizing toggle (0.5.0): "Grow when frames are late" (default), or "Size from measured frame cost" (experimental). The second starts at 4 workers and jumps to ceil(fps x seconds per frame x 1.25) + 1, re-evaluated at most once a second, and only ever grows.
+- NVENC H.264 10-bit 4:2:2 all-intra encoder (0.6.0), RTX 50 series only: FFmpeg `h264_nvenc` from OBS's obs-deps, P216 straight in (no conversion), profile high422, `-g 1 -bf 0`, CBR, `tune ll` (`tune hq` is rejected with a GOP of 1 at p4-p7), preset p5 or p1, `delay 0`, SPS/PPS in extradata (global header). Default 200 Mbit/s, chosen from the desktop FFmpeg test (`REPORT-INTRA.md`: 100M 58.8 dB, 200M 62.2 dB, 300M 65.3 dB; ProRes LT 59.7 dB). Max 2 frames in flight (NVENC session limit). The ProRes profile list, Threads setting and FourCC are hidden/zero for this backend. Pre-RTX-50 support (HEVC/AV1 4:2:0) is deferred. Tested in OBS on the desktop RTX 5080 with the AverMedia card (REPORT-NVENC-PLUGIN.md, 2026-11-03): 100/200/300 (p1) 1 min, 200 for 10 min and 5 start/stop cycles, all High 4:2:2 Intra yuv422p10le, every frame I, bitrate on target, 0 repeated frames (log and hashes), about 20 ms per frame, OBS about 1% CPU, NVENC about 27%. On the laptop RTX 4070 it fails cleanly with the RTX 50 message.
 - Linux later: keep the code portable where practical (pthreads, libobs threading). Install paths differ.
 
 ## Test results (laptop: Core Ultra 9 185H, 16 cores / 22 threads, RTX 4070 Laptop)
@@ -77,7 +78,7 @@ Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, 
 
 ## Open items
 
-1. **Desktop**: install 0.4.2 and re-test prores_ks; the plugin now grows to 32 workers. Fix the camera frame-rate mismatch, then re-check AW for repeats.
+1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
 4. Linux build: not started.

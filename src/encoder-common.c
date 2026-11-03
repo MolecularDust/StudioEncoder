@@ -199,12 +199,15 @@ static void read_settings(struct pr_params *p, obs_data_t *settings, const struc
 	p->vendor_apl0 = obs_data_get_bool(settings, "vendor_apl0");
 	p->log_level = (int)obs_data_get_int(settings, S_LOG_LEVEL);
 	p->codec_name = backend->codec_name;
+	p->bitrate_mbps = (int)obs_data_get_int(settings, "bitrate_mbps");
+	p->nvenc_fast = obs_data_get_int(settings, "nvenc_preset") == 1;
 }
 
-/* The muxer reads the container FourCC from the encoder's own settings. */
-static void publish_codec_type(obs_data_t *settings, enum pr_profile profile)
+/* The muxer reads the container FourCC from the encoder's own settings. Only ProRes needs one; 0 lets the muxer
+ * choose its default tag (avc1 for H.264). */
+static void publish_codec_type(obs_data_t *settings, const struct pr_backend *backend, enum pr_profile profile)
 {
-	obs_data_set_int(settings, S_CODEC_TYPE, profile_fourcc[profile]);
+	obs_data_set_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[profile] : 0);
 }
 
 static void *pr_worker(void *param)
@@ -312,7 +315,7 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 	enc->params.fps_num = voi->fps_num;
 	enc->params.fps_den = voi->fps_den;
 	fill_color(&enc->params, voi);
-	publish_codec_type(settings, enc->params.profile);
+	publish_codec_type(settings, enc->backend, enc->params.profile);
 
 	if (enc->params.width == 0 || enc->params.height == 0 || (enc->params.width & 1)) {
 		obs_log(LOG_ERROR, "%s: unsupported frame size %ux%u (width must be even)", backend->log_name,
@@ -339,6 +342,13 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 		enc->max_depth = enc->params.in_flight;
 		enc->depth = enc->params.in_flight;
 	}
+	/* some backends open a hardware session per frame in flight, and those sessions are limited */
+	if (backend->max_in_flight > 0) {
+		if (enc->max_depth > backend->max_in_flight)
+			enc->max_depth = backend->max_in_flight;
+		if (enc->depth > enc->max_depth)
+			enc->depth = enc->max_depth;
+	}
 	/* backends use this to choose between frame-level and slice-level parallelism */
 	enc->params.in_flight = enc->max_depth;
 
@@ -358,15 +368,20 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 	}
 
 	static const char *const profile_names[] = {"Proxy", "LT", "422", "HQ"};
-	if (enc->auto_depth)
-		obs_log(LOG_INFO,
-			"%s: %ux%u %u/%u fps, profile %s, P216 input, frames in flight: automatic (%d, up to %d)",
-			backend->log_name, enc->params.width, enc->params.height, enc->params.fps_num, enc->params.fps_den,
-			profile_names[enc->params.profile], enc->depth, enc->max_depth);
+	char quality[64];
+	if (backend->prores)
+		snprintf(quality, sizeof(quality), "profile %s", profile_names[enc->params.profile]);
 	else
-		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, profile %s, P216 input, %d frame%s in flight",
+		snprintf(quality, sizeof(quality), "%d Mbit/s, preset %s", enc->params.bitrate_mbps,
+			 enc->params.nvenc_fast ? "p1 (fast)" : "p5 (quality)");
+	if (enc->auto_depth)
+		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, %s, P216 input, frames in flight: automatic (%d, up to %d)",
 			backend->log_name, enc->params.width, enc->params.height, enc->params.fps_num, enc->params.fps_den,
-			profile_names[enc->params.profile], enc->depth, enc->depth == 1 ? "" : "s");
+			quality, enc->depth, enc->max_depth);
+	else
+		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, %s, P216 input, %d frame%s in flight", backend->log_name,
+			enc->params.width, enc->params.height, enc->params.fps_num, enc->params.fps_den, quality, enc->depth,
+			enc->depth == 1 ? "" : "s");
 	return enc;
 
 fail:
@@ -426,7 +441,7 @@ bool pr_encoder_update(void *data, obs_data_t *settings)
 
 	/* Everything but logging is fixed once the encoder is created. */
 	enc->params.log_level = (int)obs_data_get_int(settings, S_LOG_LEVEL);
-	publish_codec_type(settings, enc->params.profile);
+	publish_codec_type(settings, enc->backend, enc->params.profile);
 	return true;
 }
 
@@ -581,9 +596,20 @@ bool pr_encoder_encode(void *data, struct encoder_frame *frame, struct encoder_p
 		       err[0] ? err : "could not get frame buffers");
 		return false;
 	}
-	pr_p216_to_planar10(frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1], enc->params.width,
-			    enc->params.height, in->planes.y, in->planes.y_stride, in->planes.cb, in->planes.cr,
-			    in->planes.c_stride);
+	if (in->planes.semi_planar) {
+		/* the encoder takes P216 as OBS delivers it: copy the Y and interleaved CbCr planes row by row */
+		const size_t row_bytes = (size_t)enc->params.width * 2;
+		for (uint32_t y = 0; y < enc->params.height; y++) {
+			memcpy(in->planes.y + (size_t)y * in->planes.y_stride, frame->data[0] + (size_t)y * frame->linesize[0],
+			       row_bytes);
+			memcpy(in->planes.uv + (size_t)y * in->planes.uv_stride,
+			       frame->data[1] + (size_t)y * frame->linesize[1], row_bytes);
+		}
+	} else {
+		pr_p216_to_planar10(frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1],
+				    enc->params.width, enc->params.height, in->planes.y, in->planes.y_stride,
+				    in->planes.cb, in->planes.cr, in->planes.c_stride);
+	}
 	in->pts = frame->pts;
 	os_sem_post(in->start);
 	enc->fifo[(enc->fifo_head + enc->pending) % PR_MAX_IN_FLIGHT] = in_idx;
@@ -679,7 +705,7 @@ void pr_encoder_get_defaults(obs_data_t *settings, void *type_data)
 	obs_data_set_default_int(settings, S_LOG_LEVEL, PR_LOG_WARNINGS);
 	obs_data_set_default_int(settings, S_OVERLOAD, PR_OVERLOAD_WARN);
 	obs_data_set_default_int(settings, S_SIZING, PR_SIZING_LATE);
-	obs_data_set_default_int(settings, S_CODEC_TYPE, profile_fourcc[PR_PROFILE_422]);
+	obs_data_set_default_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[PR_PROFILE_422] : 0);
 	obs_data_set_default_string(settings, S_INFO, obs_module_text("Info.Text"));
 	backend->set_defaults(settings);
 }
@@ -694,12 +720,15 @@ obs_properties_t *pr_encoder_get_properties(void *data, void *type_data)
 	obs_property_t *info = obs_properties_add_text(props, S_INFO, obs_module_text("Info.Requirements"), OBS_TEXT_INFO);
 	obs_property_text_set_info_type(info, OBS_TEXT_INFO_NORMAL);
 
-	obs_property_t *p = obs_properties_add_list(props, S_PROFILE, obs_module_text("Profile"), OBS_COMBO_TYPE_LIST,
-						    OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(p, obs_module_text("Profile.Proxy"), PR_PROFILE_PROXY);
-	obs_property_list_add_int(p, obs_module_text("Profile.LT"), PR_PROFILE_LT);
-	obs_property_list_add_int(p, obs_module_text("Profile.422"), PR_PROFILE_422);
-	obs_property_list_add_int(p, obs_module_text("Profile.HQ"), PR_PROFILE_HQ);
+	obs_property_t *p;
+	if (backend->prores) {
+		p = obs_properties_add_list(props, S_PROFILE, obs_module_text("Profile"), OBS_COMBO_TYPE_LIST,
+					    OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(p, obs_module_text("Profile.Proxy"), PR_PROFILE_PROXY);
+		obs_property_list_add_int(p, obs_module_text("Profile.LT"), PR_PROFILE_LT);
+		obs_property_list_add_int(p, obs_module_text("Profile.422"), PR_PROFILE_422);
+		obs_property_list_add_int(p, obs_module_text("Profile.HQ"), PR_PROFILE_HQ);
+	}
 
 	backend->add_properties(props);
 
@@ -718,8 +747,10 @@ obs_properties_t *pr_encoder_get_properties(void *data, void *type_data)
 	obs_property_list_add_int(p, obs_module_text("Overload.Stop"), PR_OVERLOAD_STOP);
 	obs_property_set_long_description(p, obs_module_text("Overload.Description"));
 
-	obs_property_t *t = obs_properties_add_int(props, S_THREADS, obs_module_text("Threads"), 0, 64, 1);
-	obs_property_set_long_description(t, obs_module_text("Threads.Description"));
+	if (backend->prores) {
+		obs_property_t *t = obs_properties_add_int(props, S_THREADS, obs_module_text("Threads"), 0, 64, 1);
+		obs_property_set_long_description(t, obs_module_text("Threads.Description"));
+	}
 
 	p = obs_properties_add_list(props, S_LOG_LEVEL, obs_module_text("LogLevel"), OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_INT);
@@ -731,12 +762,17 @@ obs_properties_t *pr_encoder_get_properties(void *data, void *type_data)
 	return props;
 }
 
-/* ProRes has no codec headers, but obs-ffmpeg-mux silently drops all packets unless this returns true
- * (the macOS VideoToolbox ProRes encoder also returns true with empty data). */
+/* obs-ffmpeg-mux silently drops all packets unless this returns true. ProRes has no codec headers (the macOS
+ * VideoToolbox ProRes encoder also returns true with empty data); H.264 returns its SPS/PPS. Every worker's
+ * context is set up identically, so the first one's headers stand for all. */
 bool pr_encoder_get_extra_data(void *data, uint8_t **extra_data, size_t *size)
 {
 	static uint8_t empty;
-	UNUSED_PARAMETER(data);
+	struct pr_encoder *enc = data;
+
+	if (enc && enc->backend->get_extra_data && enc->created > 0)
+		return enc->backend->get_extra_data(enc->slots[0]->ctx, extra_data, size);
+
 	*extra_data = &empty;
 	*size = 0;
 	return true;

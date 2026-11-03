@@ -32,6 +32,8 @@ struct pr_params {
 	bool vendor_apl0;
 	int log_level;
 	const char *codec_name; /* FFmpeg encoder name, or NULL for the Rust backend */
+	int bitrate_mbps; /* NVENC only */
+	bool nvenc_fast;  /* NVENC only: preset p1 instead of p5 */
 	uint32_t width;
 	uint32_t height;
 	uint32_t fps_num;
@@ -49,6 +51,10 @@ struct pr_planes {
 	uint16_t *cr;
 	size_t y_stride;
 	size_t c_stride;
+	/* semi-planar P216 destination (NVENC): Y plane plus interleaved CbCr, copied as is */
+	bool semi_planar;
+	uint16_t *uv;
+	size_t uv_stride;
 };
 
 struct pr_backend {
@@ -56,6 +62,8 @@ struct pr_backend {
 	const char *log_name;   /* short name used in log lines */
 	const char *codec_name; /* FFmpeg encoder name, or NULL */
 	int default_in_flight;
+	int max_in_flight; /* 0 = no limit; NVENC sessions are limited on consumer GPUs */
+	bool prores;       /* ProRes profile list and container FourCC */
 
 	/* One context is created per frame in flight; each is used by one worker thread at a time. */
 	void *(*create)(const struct pr_params *params, char *err, size_t err_len);
@@ -66,6 +74,8 @@ struct pr_backend {
 	void (*destroy)(void *ctx);
 	void (*add_properties)(obs_properties_t *props);
 	void (*set_defaults)(obs_data_t *settings);
+	/* Optional: codec headers (for example H.264 SPS/PPS) from a created context. */
+	bool (*get_extra_data)(void *ctx, uint8_t **extra_data, size_t *size);
 };
 
 /* Shared encoder plumbing used by all backends. */

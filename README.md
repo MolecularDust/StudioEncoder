@@ -11,8 +11,19 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders to **
 | ProRes (FFmpeg prores_aw, fast) | FFmpeg `prores_aw` | **Recommended.** Light on CPU; real-time 4K30 on a laptop CPU at LT, 422 and HQ. |
 | ProRes (FFmpeg prores_ks) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
 | ProRes-compatible (Rust / FilmCraft) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
+| H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
+
+### H.264 10-bit 4:2:2 Intra (NVIDIA NVENC)
+
+A space-saving alternative to ProRes, encoded on the GPU. Every frame is a keyframe (all-intra), High 4:2:2 profile, 10-bit, constant bitrate, so it edits like ProRes but is smaller at a small cost in quality.
+
+- **Needs an NVIDIA RTX 50-series GPU** (Blackwell) and a current driver. Older NVIDIA cards can't encode H.264 10-bit or 4:2:2; on those the recording won't start and OBS shows an error. Use ProRes (prores_aw) there.
+- **Bitrate**: 100 Mbit/s (small, about ProRes LT quality), **200 (default**, better than ProRes LT, about half the size of ProRes 422), 300 (high). Above 400 adds nothing.
+- **Speed**: Quality (p5, default) or Fast (p1, slightly lower quality).
+- Frames go to the GPU as P216 without conversion. At most 2 frames are in flight, because consumer NVIDIA cards limit the number of encoder sessions.
+- In an FFmpeg test on an RTX 5080 (4K 29.97 camera footage) this ran at about 77 fps at p5 and 101 fps at p1.
 
 ## Requirements
 
@@ -35,7 +46,7 @@ Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 mar
 1. Settings → Advanced: **Color Format P216**, Color Space Rec. 709, Color Range Limited.
 2. Settings → Output: Output Mode **Advanced**, Recording tab, Type **Standard**, Recording Format **MOV**.
 3. Video Encoder: one of the encoders above. In its settings:
-   - **Profile**: Proxy, LT, 422 or HQ.
+   - **Profile** (ProRes encoders): Proxy, LT, 422 or HQ. **Bitrate** and **Speed** (NVENC encoder): see above.
    - **Frames in flight**: 0 (automatic, recommended). Frames are encoded in parallel, one per CPU core, as needed.
    - **Automatic sizing** (only with Frames in flight 0): *Grow when frames are late* (default) or *Size from measured frame cost* (experimental). The second starts with 4 workers, times a frame, then sets the number of workers needed in one step. That uses less memory for light encoders and ramps up faster for heavy ones. CPU load is the same either way.
    - **On overload**: *Warn in the log* or *Stop recording*.

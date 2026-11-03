@@ -94,6 +94,7 @@ static const struct pr_backend rust_backend = {
 	.log_name = "rust",
 	.codec_name = NULL,
 	.default_in_flight = 0, /* automatic */
+	.prores = true,
 	.create = rust_create,
 	.get_planes = rust_get_planes,
 	.encode = rust_encode,

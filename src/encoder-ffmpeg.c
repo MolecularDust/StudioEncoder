@@ -149,6 +149,134 @@ static bool ff_encode(void *ctx, uint8_t *out, size_t out_cap, size_t *out_size,
 	return true;
 }
 
+/* ---- H.264 10-bit 4:2:2 all-intra on NVIDIA NVENC (RTX 50 series and newer) ---- */
+
+#define S_NV_BITRATE "bitrate_mbps"
+#define S_NV_PRESET "nvenc_preset"
+
+static void *nv_create(const struct pr_params *p, char *err, size_t err_len)
+{
+	const AVCodec *codec = avcodec_find_encoder_by_name("h264_nvenc");
+	if (!codec) {
+		snprintf(err, err_len, "the FFmpeg loaded by OBS has no h264_nvenc encoder");
+		return NULL;
+	}
+
+	struct ff_ctx *c = bzalloc(sizeof(*c));
+	c->cc = avcodec_alloc_context3(codec);
+	c->frame = av_frame_alloc();
+	c->packet = av_packet_alloc();
+	if (!c->cc || !c->frame || !c->packet) {
+		snprintf(err, err_len, "out of memory");
+		goto fail;
+	}
+
+	AVCodecContext *cc = c->cc;
+	/* P216 is exactly what OBS outputs, so frames go to the GPU without conversion */
+	cc->pix_fmt = AV_PIX_FMT_P216LE;
+	cc->width = (int)p->width;
+	cc->height = (int)p->height;
+	cc->time_base = (AVRational){(int)p->fps_den, (int)p->fps_num};
+	cc->framerate = (AVRational){(int)p->fps_num, (int)p->fps_den};
+	cc->color_primaries = (enum AVColorPrimaries)p->color_primaries;
+	cc->color_trc = (enum AVColorTransferCharacteristic)p->color_transfer;
+	cc->colorspace = (enum AVColorSpace)p->color_matrix;
+	cc->color_range = p->full_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+
+	/* all-intra: every frame an IDR frame, no B-frames */
+	cc->gop_size = 1;
+	cc->max_b_frames = 0;
+
+	const int64_t bitrate = (int64_t)(p->bitrate_mbps > 0 ? p->bitrate_mbps : 200) * 1000000;
+	cc->bit_rate = bitrate;
+	cc->rc_max_rate = bitrate;
+	cc->rc_buffer_size = (int)bitrate;
+
+	/* SPS/PPS go to extradata for the MOV header instead of being repeated in every packet */
+	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+	av_opt_set(cc->priv_data, "profile", "high422", 0);
+	av_opt_set(cc->priv_data, "preset", p->nvenc_fast ? "p1" : "p5", 0);
+	/* "hq" tuning refuses a GOP of 1 at p4-p7 ("Gop Length should be greater than number of B frames + 1") */
+	av_opt_set(cc->priv_data, "tune", "ll", 0);
+	av_opt_set(cc->priv_data, "rc", "cbr", 0);
+	/* return each packet as soon as its frame is encoded: OBS never flushes video encoders */
+	av_opt_set_int(cc->priv_data, "delay", 0, 0);
+
+	int ret = avcodec_open2(cc, codec, NULL);
+	if (ret < 0) {
+		char msg[AV_ERROR_MAX_STRING_SIZE];
+		snprintf(err, err_len,
+			 "NVENC could not start H.264 10-bit 4:2:2 (%s). This encoder needs an NVIDIA RTX 50-series GPU "
+			 "and a current driver; on other GPUs use ProRes (FFmpeg prores_aw, fast).",
+			 av_make_error_string(msg, sizeof(msg), ret));
+		goto fail;
+	}
+
+	c->frame->format = cc->pix_fmt;
+	c->frame->width = cc->width;
+	c->frame->height = cc->height;
+	if (av_frame_get_buffer(c->frame, 0) < 0) {
+		snprintf(err, err_len, "could not allocate frame buffers");
+		goto fail;
+	}
+	return c;
+
+fail:
+	ff_destroy(c);
+	return NULL;
+}
+
+static bool nv_get_planes(void *ctx, struct pr_planes *planes, char *err, size_t err_len)
+{
+	struct ff_ctx *c = ctx;
+	AVFrame *f = c->frame;
+
+	int ret = av_frame_make_writable(f);
+	if (ret < 0) {
+		char msg[AV_ERROR_MAX_STRING_SIZE];
+		snprintf(err, err_len, "av_frame_make_writable: %s", av_make_error_string(msg, sizeof(msg), ret));
+		return false;
+	}
+
+	planes->semi_planar = true;
+	planes->y = (uint16_t *)f->data[0];
+	planes->uv = (uint16_t *)f->data[1];
+	planes->y_stride = (size_t)f->linesize[0] / 2;
+	planes->uv_stride = (size_t)f->linesize[1] / 2;
+	planes->cb = planes->cr = NULL;
+	planes->c_stride = 0;
+	return true;
+}
+
+static bool nv_get_extra_data(void *ctx, uint8_t **extra_data, size_t *size)
+{
+	struct ff_ctx *c = ctx;
+	if (!c || !c->cc || !c->cc->extradata || c->cc->extradata_size <= 0)
+		return false;
+	*extra_data = c->cc->extradata;
+	*size = (size_t)c->cc->extradata_size;
+	return true;
+}
+
+static void nv_add_properties(obs_properties_t *props)
+{
+	obs_property_t *b = obs_properties_add_int(props, S_NV_BITRATE, obs_module_text("NvBitrate"), 50, 400, 10);
+	obs_property_int_set_suffix(b, " Mbit/s");
+	obs_property_set_long_description(b, obs_module_text("NvBitrate.Description"));
+
+	obs_property_t *p = obs_properties_add_list(props, S_NV_PRESET, obs_module_text("NvPreset"), OBS_COMBO_TYPE_LIST,
+						    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("NvPreset.Quality"), 0);
+	obs_property_list_add_int(p, obs_module_text("NvPreset.Fast"), 1);
+}
+
+static void nv_set_defaults(obs_data_t *settings)
+{
+	obs_data_set_default_int(settings, S_NV_BITRATE, 200);
+	obs_data_set_default_int(settings, S_NV_PRESET, 0);
+}
+
 static void ks_add_properties(obs_properties_t *props)
 {
 	obs_property_t *q = obs_properties_add_int(props, S_QSCALE, obs_module_text("QScale"), 0, 31, 1);
@@ -178,6 +306,7 @@ static const struct pr_backend ffmpeg_ks_backend = {
 	.log_name = "ffmpeg-ks",
 	.codec_name = "prores_ks",
 	.default_in_flight = 0, /* automatic */
+	.prores = true,
 	.create = ff_create,
 	.get_planes = ff_get_planes,
 	.encode = ff_encode,
@@ -191,6 +320,7 @@ static const struct pr_backend ffmpeg_aw_backend = {
 	.log_name = "ffmpeg-aw",
 	.codec_name = "prores_aw",
 	.default_in_flight = 0, /* automatic */
+	.prores = true,
 	.create = ff_create,
 	.get_planes = ff_get_planes,
 	.encode = ff_encode,
@@ -237,4 +367,40 @@ struct obs_encoder_info pr_ffmpeg_aw_encoder_info = {
 	.get_defaults2 = pr_encoder_get_defaults,
 	.get_properties2 = pr_encoder_get_properties,
 	.type_data = (void *)&ffmpeg_aw_backend,
+};
+
+static const struct pr_backend nvenc_h264_backend = {
+	.name_key = "Encoder.NvencH264",
+	.log_name = "nvenc-h264",
+	.codec_name = "h264_nvenc",
+	.default_in_flight = 0, /* automatic */
+	.max_in_flight = 2,     /* each frame in flight opens an NVENC session */
+	.prores = false,
+	.create = nv_create,
+	.get_planes = nv_get_planes,
+	.encode = ff_encode,
+	.destroy = ff_destroy,
+	.get_extra_data = nv_get_extra_data,
+	.add_properties = nv_add_properties,
+	.set_defaults = nv_set_defaults,
+};
+
+static void *nvenc_h264_create(obs_data_t *settings, obs_encoder_t *encoder)
+{
+	return pr_encoder_create(&nvenc_h264_backend, settings, encoder);
+}
+
+struct obs_encoder_info pr_nvenc_h264_encoder_info = {
+	.id = "obs_prores_nvenc_h264_422_intra",
+	.type = OBS_ENCODER_VIDEO,
+	.codec = "h264",
+	.get_name = pr_encoder_get_name,
+	.create = nvenc_h264_create,
+	.destroy = pr_encoder_destroy,
+	.encode = pr_encoder_encode,
+	.update = pr_encoder_update,
+	.get_extra_data = pr_encoder_get_extra_data,
+	.get_defaults2 = pr_encoder_get_defaults,
+	.get_properties2 = pr_encoder_get_properties,
+	.type_data = (void *)&nvenc_h264_backend,
 };
