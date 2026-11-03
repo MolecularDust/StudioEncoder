@@ -355,7 +355,7 @@ struct obs_encoder_info pr_ffmpeg_encoder_info = {
 };
 
 struct obs_encoder_info pr_ffmpeg_aw_encoder_info = {
-	.id = "obs_prores_ffmpeg_aw",
+	.id = "obs_prores_ffmpeg_aw_original",
 	.type = OBS_ENCODER_VIDEO,
 	.codec = "prores",
 	.get_name = pr_encoder_get_name,

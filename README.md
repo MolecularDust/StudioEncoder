@@ -10,7 +10,8 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 
 | Encoder in OBS | Implementation | Notes |
 |---|---|---|
-| ProRes (FFmpeg prores_aw, fast) | FFmpeg `prores_aw` | **Recommended.** Light on CPU; real-time 4K30 on a laptop CPU at LT, 422 and HQ. |
+| SE: ProRes (AW+, fast) | AW+: FFmpeg's `prores_aw` built into the plugin, with corrected rounding | **Recommended.** Light on CPU (a little lighter than FFmpeg's own build). Proxy keeps fine detail; FFmpeg's prores_aw makes Proxy blurry. |
+| SE: ProRes (FFmpeg prores_aw, original) (experimental) | FFmpeg `prores_aw` from OBS | The unmodified encoder, kept for comparison. Its Proxy is blurry. |
 | ProRes (FFmpeg prores_ks) (experimental) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
 | ProRes-compatible (Rust / FilmCraft) (experimental) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
 | ProRes (OxideAV, pure Rust) (experimental) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
@@ -20,10 +21,24 @@ Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
 
 ### Choosing which encoders show up (Tools > StudioEncoders)
 
-OBS's encoder list stays short by default. **Tools > StudioEncoders** opens a window listing every encoder in this plugin, split into **Recommended** (prores_aw and the NVENC H.264 encoder, both on) and **Experimental** (prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
+OBS's encoder list stays short by default. **Tools > StudioEncoders** opens a window listing every encoder in this plugin, split into **Recommended** (AW+ and the NVENC H.264 encoder, both on) and **Experimental** (FFmpeg's original prores_aw, prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
 
 An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working. All encoders from this plugin start with "SE:" in OBS's encoder list so they are easy to spot.
 
+
+### Why AW+ (fixed prores_aw)
+
+FFmpeg's prores_aw divides each detail coefficient by its quantiser step and **truncates toward zero**, so anything smaller than a full step is thrown away. At Proxy, where steps are coarse, that removes fine texture: faces and fabric look smeared. Apple's encoder uses the same Proxy matrix and quantiser but keeps that detail. AW+ is prores_aw ported into the plugin with rounding instead of truncation (offset per profile: Proxy 4/8, LT 3/8, 422 3/8, HQ 2/8 of a step, chosen for the best quality per bit).
+
+Measured on a 4K camera clip (PSNR, higher is better):
+
+| Profile | FFmpeg prores_aw | AW+ | Apple ProRes |
+|---|---|---|---|
+| Proxy | 74 Mbit/s, 54.0 dB | **94 Mbit/s, 56.2 dB** | 96 Mbit/s, 56.5 dB |
+| LT | 170 Mbit/s, 59.7 dB | 198 Mbit/s, 61.6 dB | 235 Mbit/s, 62.2 dB |
+| HQ | 492 Mbit/s, 71.1 dB | 560 Mbit/s, 73.5 dB | 520 Mbit/s, 72.2 dB |
+
+With rounding switched off, AW+ produces byte-identical files to FFmpeg's prores_aw (checked on all four profiles).
 The NVENC H.264 encoder checks your graphics card when OBS starts. If the card cannot encode H.264 10-bit 4:2:2 (anything older than an RTX 50 series), the encoder is hidden from the list and shown grayed out in this window.
 
 ### H.264 10-bit 4:2:2 Intra (NVIDIA NVENC)
@@ -89,4 +104,5 @@ See `docs/HANDOFF.md` for toolchain and build steps.
 GPL-2.0-or-later (see `LICENSE`), as required for OBS plugins. Third-party code:
 - FFmpeg (LGPL), as shipped with OBS.
 - FilmCraft ProRes crate (MIT OR Apache-2.0, used under MIT).
+- AW+ (`src/prores-aw.c`): a port of FFmpeg's prores_aw encoder, forward DCT and ProRes tables (LGPL 2.1 or later; Anatoliy Wasserman, Konstantin Shishkov, Independent JPEG Group), used under the GPL.
 - `oxideav-prores` and `oxideav-core` (MIT), the OxideAV ProRes encoder.

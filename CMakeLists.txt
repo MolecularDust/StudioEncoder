@@ -42,7 +42,7 @@ endif()
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE src/plugin-main.c src/encoder-common.c src/encoder-common.h src/encoder-rust.c src/encoder-oxideav.c src/encoder-ffmpeg.c src/prores-rs.h src/settings.c src/settings.h src/settings-dialog.cpp
+  PRIVATE src/plugin-main.c src/encoder-common.c src/encoder-common.h src/encoder-rust.c src/encoder-oxideav.c src/encoder-ffmpeg.c src/prores-rs.h src/settings.c src/settings.h src/settings-dialog.cpp src/prores-aw.c src/prores-aw.h src/encoder-awplus.c
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
@@ -50,3 +50,6 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 # Plugin Manager metadata (Tools > Plugin Manager reads the version from data/manifest.json).
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/manifest.json.in" "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" DESTINATION "${CMAKE_PROJECT_NAME}/data" COMPONENT Runtime)
+
+# Test program for the AW+ ProRes encoder core (not part of the plugin; build with --target prores-aw-test).
+add_executable(prores-aw-test EXCLUDE_FROM_ALL tools/prores-aw-test.c src/prores-aw.c)

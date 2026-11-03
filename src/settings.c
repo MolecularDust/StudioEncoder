@@ -7,25 +7,27 @@
 extern struct obs_encoder_info pr_rust_encoder_info;
 extern struct obs_encoder_info pr_ffmpeg_encoder_info;
 extern struct obs_encoder_info pr_ffmpeg_aw_encoder_info;
+extern struct obs_encoder_info pr_awplus_encoder_info;
 extern struct obs_encoder_info pr_nvenc_h264_encoder_info;
 extern struct obs_encoder_info pr_oxideav_encoder_info;
 
 bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len);
 
 static const struct pr_encoder_entry entries[] = {
-	{"obs_prores_ffmpeg_aw", "Desc.FFmpegAw", false, &pr_ffmpeg_aw_encoder_info, NULL},
+	{"obs_prores_ffmpeg_aw", "Desc.AwPlus", false, &pr_awplus_encoder_info, NULL},
 	{"obs_prores_nvenc_h264_422_intra", "Desc.NvencH264", false, &pr_nvenc_h264_encoder_info, pr_nvenc_h264_422_probe},
+	{"obs_prores_ffmpeg_aw_original", "Desc.FFmpegAw", true, &pr_ffmpeg_aw_encoder_info, NULL},
 	{"obs_prores_ffmpeg", "Desc.FFmpeg", true, &pr_ffmpeg_encoder_info, NULL},
 	{"obs_prores_rust", "Desc.Rust", true, &pr_rust_encoder_info, NULL},
 	{"obs_prores_oxideav", "Desc.OxideAV", true, &pr_oxideav_encoder_info, NULL},
 };
 #define ENTRY_COUNT (sizeof(entries) / sizeof(entries[0]))
 
-/* -1 = not saved yet: use the default (on, except for experimental encoders) */
-static int saved[ENTRY_COUNT] = {-1, -1, -1, -1, -1};
+/* -1 = not saved yet: use the default (on, except for experimental encoders); set in pr_settings_load */
+static int saved[ENTRY_COUNT];
 
 /* false when the start-up hardware check failed */
-static bool available[ENTRY_COUNT] = {true, true, true, true, true};
+static bool available[ENTRY_COUNT];
 
 const struct pr_encoder_entry *pr_encoder_entries(size_t *count)
 {
@@ -73,6 +75,10 @@ static void run_probes(void)
 
 void pr_settings_load(void)
 {
+	for (size_t i = 0; i < ENTRY_COUNT; i++) {
+		saved[i] = -1;
+		available[i] = true;
+	}
 	run_probes();
 
 	char *path = obs_module_config_path("settings.json");

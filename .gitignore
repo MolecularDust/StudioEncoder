@@ -7,6 +7,7 @@
 !/cmake
 !/data
 !/src
+!/tools
 !.clang-format
 !.gersemirc
 !.gitignore
