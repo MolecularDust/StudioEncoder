@@ -2,7 +2,7 @@
 
 An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders to **Standard** recording mode, for 4K, 10-bit, 4:2:2 recording to MOV.
 
-> **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` and `prores_ks`, and the FilmCraft Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
+> **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` and `prores_ks`, the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
 
 ## Encoders
 
@@ -11,6 +11,7 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders to **
 | ProRes (FFmpeg prores_aw, fast) | FFmpeg `prores_aw` | **Recommended.** Light on CPU; real-time 4K30 on a laptop CPU at LT, 422 and HQ. |
 | ProRes (FFmpeg prores_ks) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
 | ProRes-compatible (Rust / FilmCraft) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
+| ProRes (OxideAV, pure Rust) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Light on CPU like prores_aw (about 70 fps at 4K on a 22-thread laptop with frames in parallel). File sizes between prores_aw and Apple: about 328 Mbit/s at 422. Very young code (0.1). |
 | H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
@@ -76,3 +77,4 @@ See `docs/HANDOFF.md` for toolchain and build steps.
 GPL-2.0-or-later (see `LICENSE`), as required for OBS plugins. Third-party code:
 - FFmpeg (LGPL), as shipped with OBS.
 - FilmCraft ProRes crate (MIT OR Apache-2.0, used under MIT).
+- `oxideav-prores` and `oxideav-core` (MIT), the OxideAV ProRes encoder.

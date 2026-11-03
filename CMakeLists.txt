@@ -40,7 +40,7 @@ endif()
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE src/plugin-main.c src/encoder-common.c src/encoder-common.h src/encoder-rust.c src/encoder-ffmpeg.c src/prores-rs.h
+  PRIVATE src/plugin-main.c src/encoder-common.c src/encoder-common.h src/encoder-rust.c src/encoder-oxideav.c src/encoder-ffmpeg.c src/prores-rs.h
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

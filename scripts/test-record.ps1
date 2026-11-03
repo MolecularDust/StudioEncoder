@@ -12,6 +12,8 @@ param(
   [int]$Overload = 0,                        # 0 = warn, 1 = stop recording
   [int]$Sizing = 0,                          # 0 = grow when late, 1 = size from measured frame cost
   [string]$Clip = "",                         # optional video file to loop as the source instead of a flat colour
+  [string]$ColorFormat = 'P216',            # OBS output colour format
+  [string]$EncoderJson = '',                # raw recordEncoder.json content; replaces the plugin settings
   [string]$ObsDir = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -37,7 +39,7 @@ OutputCX=3840
 OutputCY=2160
 FPSType=0
 FPSCommon=29.97
-ColorFormat=P216
+ColorFormat=$ColorFormat
 ColorSpace=709
 ColorRange=Partial
 
@@ -52,7 +54,8 @@ RecEncoder=$Encoder
 RecTracks=1
 "@ | Set-Content (Join-Path $prof 'basic.ini') -Encoding utf8
 $inflightJson = if ($InFlight -gt 0) { ",`"in_flight`":$InFlight" } else { "" }
-"{`"profile`":$Profile,`"threads`":0,`"log_level`":$LogLevel,`"qscale`":0,`"vendor_apl0`":true,`"overload_action`":$Overload,`"inflight_sizing`":$Sizing$inflightJson}" | Set-Content (Join-Path $prof 'recordEncoder.json') -Encoding utf8
+$encJson = if ($EncoderJson) { $EncoderJson } else { "{`"profile`":$Profile,`"threads`":0,`"log_level`":$LogLevel,`"qscale`":0,`"vendor_apl0`":true,`"overload_action`":$Overload,`"inflight_sizing`":$Sizing$inflightJson}" }
+$encJson | Set-Content (Join-Path $prof 'recordEncoder.json') -Encoding utf8
 if ($Clip) {
   # loop a real recording; hardware decoding off so the CPU load resembles a capture source plus decode
   $clipJson = ($Clip -replace '\\', '/')

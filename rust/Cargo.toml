@@ -12,6 +12,10 @@ crate-type = ["staticlib"]
 # FilmCraft ProRes crate, pinned to a reviewed commit (MIT OR Apache-2.0)
 filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "68919ed87aa6a097a4d21414ec7c438883f5fe22" }
 
+# OxideAV pure-Rust ProRes encoder (MIT), pinned to exact versions
+oxideav-prores = "=0.1.1"
+oxideav-core = "=0.1.42"
+
 [profile.release]
 opt-level = 3
 lto = true
