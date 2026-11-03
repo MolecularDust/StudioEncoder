@@ -8,6 +8,14 @@
                 "windows-x64": "bdab14146289f39be6c12d5165812ba5b37b5231f857cb84aa5e4bafeaaa8686"
             }
         },
+        "qt6": {
+            "version": "2026-10-23",
+            "baseUrl": "https://github.com/obsproject/obs-deps/releases/download",
+            "label": "Pre-Built Qt6",
+            "hashes": {
+                "windows-x64": "78cd7a138464bb6edcdd3b85fcd63a5a7c69e369629963f3bc395bab74fb3f47"
+            }
+        },
         "prebuilt": {
             "version": "2026-10-23",
             "baseUrl": "https://github.com/obsproject/obs-deps/releases/download",
@@ -19,12 +27,12 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.obs-prores"
+            "bundleId": "com.example.obs-studioencoders"
         }
     },
-    "name": "obs-prores",
-    "displayName": "ProRes-compatible encoders",
-    "version": "0.7.1",
+    "name": "obs-studioencoders",
+    "displayName": "StudioEncoders",
+    "version": "0.9.0",
     "author": "Mike",
     "website": "",
     "email": ""

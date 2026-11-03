@@ -122,6 +122,6 @@ if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force; Write-Warning 'OBS did n
 Get-ChildItem $cfg -Force | Where-Object { $_.Name -like '.sentinel*' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 "--- log summary"
-Select-String -Path $log.FullName -Pattern 'obs-prores|Total frames|skipped frames|error|Error|dts' | ForEach-Object { $_.Line } | Where-Object { $_ -notmatch 'frame \d+: |took ' }
+Select-String -Path $log.FullName -Pattern 'obs-studioencoders|Total frames|skipped frames|error|Error|dts' | ForEach-Object { $_.Line } | Where-Object { $_ -notmatch 'frame \d+: |took ' }
 "--- output"
 Get-ChildItem $out | Select-Object Name, Length | Format-Table | Out-String

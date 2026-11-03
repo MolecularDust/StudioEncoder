@@ -1,6 +1,8 @@
-# obs-prores: ProRes-compatible encoders for OBS Studio 33
+# StudioEncoders: editing-friendly encoders for OBS Studio 33
 
-An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders to **Standard** recording mode, for 4K, 10-bit, 4:2:2 recording to MOV.
+An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and an all-intra H.264 encoder to **Standard** recording mode, for 4K, 10-bit, 4:2:2 recording to MOV.
+
+*Renamed in 0.9.0 (it was called obs-prores). The plugin folder is now `obs-studioencoders`; delete the old `obs-prores` folder when you update.*
 
 > **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` and `prores_ks`, the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
 
@@ -9,12 +11,18 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders to **
 | Encoder in OBS | Implementation | Notes |
 |---|---|---|
 | ProRes (FFmpeg prores_aw, fast) | FFmpeg `prores_aw` | **Recommended.** Light on CPU; real-time 4K30 on a laptop CPU at LT, 422 and HQ. |
-| ProRes (FFmpeg prores_ks) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
-| ProRes-compatible (Rust / FilmCraft) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
-| ProRes (OxideAV, pure Rust) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
+| ProRes (FFmpeg prores_ks) (experimental) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
+| ProRes-compatible (Rust / FilmCraft) (experimental) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
+| ProRes (OxideAV, pure Rust) (experimental) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
 | H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
+
+### Choosing which encoders show up (Tools > StudioEncoders)
+
+OBS's encoder list stays short by default. **Tools > StudioEncoders** opens a window listing every encoder in this plugin, split into **Recommended** (prores_aw and the NVENC H.264 encoder, both on) and **Experimental** (prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
+
+An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working.
 
 ### H.264 10-bit 4:2:2 Intra (NVIDIA NVENC)
 
@@ -33,12 +41,14 @@ A space-saving alternative to ProRes, encoded on the GPU. Every frame is a keyfr
 
 ## Install
 
-Close OBS, then copy the `obs-prores` folder from the release zip:
+Close OBS, then copy the `obs-studioencoders` folder from the release zip:
 
-- **Installed OBS:** to `C:\ProgramData\obs-studio\plugins\obs-prores\`. `ProgramData` is hidden; type the path into File Explorer.
-- **Portable OBS:** to `<OBS folder>\plugins\obs-prores\`, next to `bin`, `data` and `config`.
+- **Installed OBS:** to `C:\ProgramData\obs-studio\plugins\obs-studioencoders\`. `ProgramData` is hidden; type the path into File Explorer.
+- **Portable OBS:** to `<OBS folder>\plugins\obs-studioencoders\`, next to `bin`, `data` and `config`.
 
-The folder must contain `obs-prores.dll` and `data\locale\`. In OBS, Tools → Plugin Manager should list "ProRes-compatible encoders".
+If you had an older version, delete its `obs-prores` folder from the same place first, or OBS will load two copies.
+
+The folder must contain `obs-studioencoders.dll` and `data\locale\`. In OBS, Tools → Plugin Manager should list "StudioEncoders", and Tools → StudioEncoders opens its settings.
 
 Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 marks those locations as legacy.
 
