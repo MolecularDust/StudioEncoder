@@ -108,29 +108,6 @@ static inline void bw_init(struct bitw *b, uint8_t *buf, size_t size)
 	b->overflow = 0;
 }
 
-static inline void bw_put(struct bitw *b, int n, uint32_t v)
-{
-	if (n <= 0)
-		return;
-	if (n < 32)
-		v &= (1u << n) - 1;
-	b->acc = (b->acc << n) | v; /* fewer than 32 bits are pending, so this fits in 64 */
-	b->nbits += n;
-	if (b->nbits >= 32) {
-		b->nbits -= 32;
-		const uint32_t w = (uint32_t)(b->acc >> b->nbits);
-		if (b->end - b->ptr >= 4) {
-			b->ptr[0] = (uint8_t)(w >> 24);
-			b->ptr[1] = (uint8_t)(w >> 16);
-			b->ptr[2] = (uint8_t)(w >> 8);
-			b->ptr[3] = (uint8_t)w;
-			b->ptr += 4;
-		} else {
-			b->overflow = 1;
-		}
-	}
-}
-
 static inline size_t bw_flush(struct bitw *b, uint8_t *start)
 {
 	while (b->nbits >= 8) {
@@ -162,26 +139,63 @@ static inline int log2_floor(unsigned v)
 
 /* ---- entropy coding (proresenc_anatoliy.c) ---- */
 
-static void encode_vlc_codeword(struct bitw *pb, unsigned codebook, int val)
+/* Append n bits (1..32) whose value already fits in n bits. */
+static inline void bw_put_raw(struct bitw *b, int n, uint32_t v)
+{
+	b->acc = (b->acc << n) | v; /* fewer than 32 bits are pending, so this fits in 64 */
+	b->nbits += n;
+	if (b->nbits >= 32) {
+		b->nbits -= 32;
+		const uint32_t w = (uint32_t)(b->acc >> b->nbits);
+		if (b->end - b->ptr >= 4) {
+			b->ptr[0] = (uint8_t)(w >> 24);
+			b->ptr[1] = (uint8_t)(w >> 16);
+			b->ptr[2] = (uint8_t)(w >> 8);
+			b->ptr[3] = (uint8_t)w;
+			b->ptr += 4;
+		} else {
+			b->overflow = 1;
+		}
+	}
+}
+
+/* Append n bits (1..64) of v; v must fit in n bits. */
+static inline void bw_put64(struct bitw *b, int n, uint64_t v)
+{
+	if (n > 32) {
+		bw_put_raw(b, n - 32, (uint32_t)(v >> 32));
+		bw_put_raw(b, 32, (uint32_t)v);
+	} else {
+		bw_put_raw(b, n, (uint32_t)v);
+	}
+}
+
+/* The ProRes Rice / exp-Golomb codeword for val in the given codebook, as a value and a length in bits (leading
+ * zeros are implied by the length). Writes exactly the bits FFmpeg's encode_vlc_codeword writes:
+ *   exp-Golomb part: (exponent - exp_order + switch_bits) zeros, then val' in exponent + 1 bits
+ *   Rice part:       (val >> rice_order) zeros, a 1, then the low rice_order bits of val */
+static inline uint32_t vlc_code(unsigned codebook, unsigned val, int *len)
 {
 	const unsigned switch_bits = (codebook & 3) + 1;
 	const unsigned rice_order = codebook >> 5;
 	const unsigned exp_order = (codebook >> 2) & 7;
 	const unsigned switch_val = switch_bits << rice_order;
 
-	if ((unsigned)val >= switch_val) {
-		val -= (int)(switch_val - (1u << exp_order));
-		const int exponent = log2_floor((unsigned)val);
-		bw_put(pb, exponent - (int)exp_order + (int)switch_bits, 0);
-		bw_put(pb, exponent + 1, (uint32_t)val);
-	} else {
-		const int exponent = val >> rice_order;
-		if (exponent)
-			bw_put(pb, exponent, 0);
-		bw_put(pb, 1, 1);
-		if (rice_order)
-			bw_put(pb, (int)rice_order, (uint32_t)val);
+	if (val >= switch_val) {
+		val -= switch_val - (1u << exp_order);
+		const int exponent = log2_floor(val);
+		*len = 2 * exponent + 1 - (int)exp_order + (int)switch_bits;
+		return val;
 	}
+	*len = (int)(val >> rice_order) + 1 + (int)rice_order;
+	return (1u << rice_order) | (val & ((1u << rice_order) - 1));
+}
+
+static inline void put_vlc(struct bitw *pb, unsigned codebook, unsigned val)
+{
+	int len;
+	const uint32_t code = vlc_code(codebook, val, &len);
+	bw_put64(pb, len, code);
 }
 
 #define GET_SIGN(x) ((x) >> 31)
@@ -201,7 +215,7 @@ static void encode_dcs(struct bitw *pb, const int16_t *blocks, int blocks_per_sl
 	const int offset = scale * round8 / 8;
 	int codebook = 5, sign = 0;
 	int prev_dc = quantise(blocks[0] - 0x4000, scale, offset);
-	encode_vlc_codeword(pb, FIRST_DC_CB, MAKE_CODE(prev_dc));
+	put_vlc(pb, FIRST_DC_CB, (unsigned)MAKE_CODE(prev_dc));
 	blocks += 64;
 
 	for (int i = 1; i < blocks_per_slice; i++, blocks += 64) {
@@ -210,17 +224,37 @@ static void encode_dcs(struct bitw *pb, const int16_t *blocks, int blocks_per_sl
 		const int new_sign = GET_SIGN(delta);
 		delta = (delta ^ sign) - sign;
 		const int code = MAKE_CODE(delta);
-		encode_vlc_codeword(pb, dc_codebook[codebook], code);
+		put_vlc(pb, dc_codebook[codebook], (unsigned)code);
 		codebook = code < 6 ? code : 6;
 		sign = new_sign;
 		prev_dc = dc;
 	}
 }
 
-/* Same result as quantise() for every 16-bit coefficient: (|x| + offset) / q is computed as a multiply by
- * rcp = ceil(2^32 / q), which is exact while |x| + offset < 2^16 and q < 2^16. */
-static void encode_acs(struct bitw *pb, const int16_t *blocks, int blocks_per_slice, const int *qmat,
-		       const uint32_t *rcp, int round8)
+/* Writes one non-zero AC coefficient: its run codeword, level codeword and sign bit, together when they fit in
+ * 64 bits. a = |x| + rounding offset; (a * r) >> 32 equals a / q because r = ceil(2^32 / q), which is exact
+ * while a < 2^16 and q < 2^16. */
+static inline void emit_ac(struct bitw *pb, int x, unsigned a, uint64_t r, int *run, int *prev_run, int *prev_level)
+{
+	const int abs_level = (int)((a * r) >> 32);
+	int lr, ll;
+	const uint32_t cr = vlc_code(run_to_cb[*prev_run], (unsigned)*run, &lr);
+	const uint32_t cl = vlc_code(level_to_cb[*prev_level], (unsigned)abs_level - 1, &ll);
+	const uint64_t lev = ((uint64_t)cl << 1) | (x < 0 ? 1u : 0u);
+	if (lr + ll + 1 <= 64) {
+		bw_put64(pb, lr + ll + 1, ((uint64_t)cr << (ll + 1)) | lev);
+	} else {
+		bw_put64(pb, lr, cr);
+		bw_put64(pb, ll + 1, lev);
+	}
+	*prev_run = *run < 15 ? *run : 15;
+	*prev_level = abs_level < 9 ? abs_level : 9;
+	*run = 0;
+}
+
+/* AC coefficients in ProRes order: frequency by frequency, each across all blocks of the slice. */
+static void encode_acs_c(struct bitw *pb, const int16_t *blocks, int blocks_per_slice, const int *qmat,
+			 const uint32_t *rcp, int round8)
 {
 	int prev_run = 4, prev_level = 2, run = 0;
 	const int max_coeffs = blocks_per_slice << 6;
@@ -237,13 +271,7 @@ static void encode_acs(struct bitw *pb, const int16_t *blocks, int blocks_per_sl
 				run++;
 				continue;
 			}
-			const int abs_level = (int)((a * r) >> 32);
-			encode_vlc_codeword(pb, run_to_cb[prev_run], run);
-			encode_vlc_codeword(pb, level_to_cb[prev_level], abs_level - 1);
-			bw_put(pb, 1, x < 0 ? 1u : 0u);
-			prev_run = run < 15 ? run : 15;
-			prev_level = abs_level < 9 ? abs_level : 9;
-			run = 0;
+			emit_ac(pb, x, a, r, &run, &prev_run, &prev_level);
 		}
 	}
 }
@@ -490,6 +518,85 @@ static PA_AVX2_FN void fdct_get_avx2(const uint16_t *src, size_t stride, int16_t
 		_mm_storeu_si128((__m128i *)(block + 8 * k), r[k]);
 }
 
+#if defined(_MSC_VER)
+static inline int ctz32(uint32_t v)
+{
+	unsigned long i;
+	_BitScanForward(&i, v);
+	return (int)i;
+}
+static inline int ctz64(uint64_t v)
+{
+	unsigned long i;
+	_BitScanForward64(&i, v);
+	return (int)i;
+}
+#else
+#define ctz32(v) __builtin_ctz(v)
+#define ctz64(v) __builtin_ctzll(v)
+#endif
+
+/* Same output as encode_acs_c. Most coefficients quantise to zero (at Proxy nearly all), so instead of testing
+ * them one by one in coding order, every block is tested 16 coefficients at a time with the same comparison
+ * (|x| + offset >= q, in 16 bits: |x| + offset stays below 2^16), giving for each frequency a bitmask of the
+ * blocks where it is non-zero. The coding loop then jumps from one non-zero coefficient to the next and adds the
+ * skipped zeros to the run. */
+static PA_AVX2_FN void encode_acs_avx2(struct bitw *pb, const int16_t *blocks, int blocks_per_slice, const int *qmat,
+				       const uint32_t *rcp, int round8)
+{
+	uint16_t qv[64], ov[64];
+	uint32_t posmask[64] = {0}; /* bit b: block b is non-zero at this (natural order) position */
+
+	for (int k = 0; k < 64; k++) {
+		qv[k] = (uint16_t)qmat[k];
+		ov[k] = (uint16_t)((unsigned)qmat[k] * (unsigned)round8 / 8);
+	}
+	for (int b = 0; b < blocks_per_slice; b++) {
+		const int16_t *blk = blocks + b * 64;
+		__m256i nz[4];
+		for (int g = 0; g < 4; g++) {
+			const __m256i x = _mm256_loadu_si256((const __m256i *)(blk + 16 * g));
+			const __m256i a = _mm256_add_epi16(_mm256_abs_epi16(x),
+							   _mm256_loadu_si256((const __m256i *)(ov + 16 * g)));
+			const __m256i q = _mm256_loadu_si256((const __m256i *)(qv + 16 * g));
+			nz[g] = _mm256_cmpeq_epi16(_mm256_max_epu16(a, q), a); /* a >= q, unsigned */
+		}
+		/* one bit per coefficient, in natural order */
+		const __m256i p01 = _mm256_permute4x64_epi64(_mm256_packs_epi16(nz[0], nz[1]), 0xD8);
+		const __m256i p23 = _mm256_permute4x64_epi64(_mm256_packs_epi16(nz[2], nz[3]), 0xD8);
+		uint64_t m = (uint64_t)(uint32_t)_mm256_movemask_epi8(p01) |
+			     ((uint64_t)(uint32_t)_mm256_movemask_epi8(p23) << 32);
+		m &= ~1ull; /* the DC coefficient is coded separately */
+		while (m) {
+			posmask[ctz64(m)] |= 1u << b;
+			m &= m - 1;
+		}
+	}
+
+	int prev_run = 4, prev_level = 2, run = 0;
+	for (int i = 1; i < 64; i++) {
+		const int pos = progressive_scan[i];
+		uint32_t m = posmask[pos];
+		if (!m) {
+			run += blocks_per_slice;
+			continue;
+		}
+		const unsigned offset = ov[pos];
+		const uint64_t r = rcp[pos];
+		int next = 0;
+		while (m) {
+			const int b = ctz32(m);
+			run += b - next;
+			const int x = blocks[b * 64 + pos];
+			const unsigned a = (unsigned)(x < 0 ? -x : x) + offset;
+			emit_ac(pb, x, a, r, &run, &prev_run, &prev_level);
+			next = b + 1;
+			m &= m - 1;
+		}
+		run += blocks_per_slice - next;
+	}
+}
+
 static int cpu_has_avx2(void)
 {
 #if defined(_MSC_VER)
@@ -510,15 +617,21 @@ static int cpu_has_avx2(void)
 #endif /* x86-64 */
 
 typedef void (*fdct_get_fn)(const uint16_t *src, size_t stride, int16_t *block);
+typedef void (*encode_acs_fn)(struct bitw *pb, const int16_t *blocks, int blocks_per_slice, const int *qmat,
+			      const uint32_t *rcp, int round8);
 static fdct_get_fn fdct_get = fdct_get_c;
+static encode_acs_fn encode_acs = encode_acs_c;
 
 void pa_set_simd(int enable)
 {
 #ifdef PA_HAVE_AVX2
-	fdct_get = (enable && cpu_has_avx2()) ? fdct_get_avx2 : fdct_get_c;
+	const int avx2 = enable && cpu_has_avx2();
+	fdct_get = avx2 ? fdct_get_avx2 : fdct_get_c;
+	encode_acs = avx2 ? encode_acs_avx2 : encode_acs_c;
 #else
 	(void)enable;
 	fdct_get = fdct_get_c;
+	encode_acs = encode_acs_c;
 #endif
 }
 

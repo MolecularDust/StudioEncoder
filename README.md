@@ -10,7 +10,7 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 
 | Encoder in OBS | Implementation | Notes |
 |---|---|---|
-| SE: ProRes (AW+, fast) | AW+: FFmpeg's `prores_aw` built into the plugin, with corrected rounding | **Recommended.** Light on CPU (a little lighter than FFmpeg's own build). Proxy keeps fine detail; FFmpeg's prores_aw makes Proxy blurry. |
+| SE: ProRes (AW+, fast) | AW+: FFmpeg's `prores_aw` built into the plugin, with corrected rounding | **Recommended.** Light on CPU: on CPUs with AVX2 its encoder share is about half of FFmpeg's own prores_aw, and it falls back to plain C (still faster than FFmpeg) on older or low-end CPUs. Proxy keeps fine detail; FFmpeg's prores_aw makes Proxy blurry. |
 | SE: ProRes (FFmpeg prores_aw, original) (experimental) | FFmpeg `prores_aw` from OBS | The unmodified encoder, kept for comparison. Its Proxy is blurry. |
 | ProRes (FFmpeg prores_ks) (experimental) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
 | ProRes-compatible (Rust / FilmCraft) (experimental) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
