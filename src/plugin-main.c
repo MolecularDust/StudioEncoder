@@ -25,7 +25,7 @@ bool obs_module_load(void)
 	for (size_t i = 0; i < count; i++) {
 		/* An encoder that is switched off is hidden from OBS's encoder list, but stays registered so that
 		 * profiles which already use it keep working. */
-		if (pr_encoder_enabled(&entries[i]))
+		if (pr_encoder_enabled(&entries[i]) && pr_encoder_available(&entries[i]))
 			entries[i].info->caps &= ~(uint32_t)OBS_ENCODER_CAP_DEPRECATED;
 		else
 			entries[i].info->caps |= OBS_ENCODER_CAP_DEPRECATED;

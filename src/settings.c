@@ -10,17 +10,22 @@ extern struct obs_encoder_info pr_ffmpeg_aw_encoder_info;
 extern struct obs_encoder_info pr_nvenc_h264_encoder_info;
 extern struct obs_encoder_info pr_oxideav_encoder_info;
 
+bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len);
+
 static const struct pr_encoder_entry entries[] = {
-	{"obs_prores_ffmpeg_aw", "Desc.FFmpegAw", false, &pr_ffmpeg_aw_encoder_info},
-	{"obs_prores_nvenc_h264_422_intra", "Desc.NvencH264", false, &pr_nvenc_h264_encoder_info},
-	{"obs_prores_ffmpeg", "Desc.FFmpeg", true, &pr_ffmpeg_encoder_info},
-	{"obs_prores_rust", "Desc.Rust", true, &pr_rust_encoder_info},
-	{"obs_prores_oxideav", "Desc.OxideAV", true, &pr_oxideav_encoder_info},
+	{"obs_prores_ffmpeg_aw", "Desc.FFmpegAw", false, &pr_ffmpeg_aw_encoder_info, NULL},
+	{"obs_prores_nvenc_h264_422_intra", "Desc.NvencH264", false, &pr_nvenc_h264_encoder_info, pr_nvenc_h264_422_probe},
+	{"obs_prores_ffmpeg", "Desc.FFmpeg", true, &pr_ffmpeg_encoder_info, NULL},
+	{"obs_prores_rust", "Desc.Rust", true, &pr_rust_encoder_info, NULL},
+	{"obs_prores_oxideav", "Desc.OxideAV", true, &pr_oxideav_encoder_info, NULL},
 };
 #define ENTRY_COUNT (sizeof(entries) / sizeof(entries[0]))
 
 /* -1 = not saved yet: use the default (on, except for experimental encoders) */
 static int saved[ENTRY_COUNT] = {-1, -1, -1, -1, -1};
+
+/* false when the start-up hardware check failed */
+static bool available[ENTRY_COUNT] = {true, true, true, true, true};
 
 const struct pr_encoder_entry *pr_encoder_entries(size_t *count)
 {
@@ -31,6 +36,11 @@ const struct pr_encoder_entry *pr_encoder_entries(size_t *count)
 static size_t index_of(const struct pr_encoder_entry *entry)
 {
 	return (size_t)(entry - entries);
+}
+
+bool pr_encoder_available(const struct pr_encoder_entry *entry)
+{
+	return available[index_of(entry)];
 }
 
 bool pr_encoder_enabled(const struct pr_encoder_entry *entry)
@@ -44,8 +54,27 @@ void pr_encoder_set_enabled(const struct pr_encoder_entry *entry, bool enabled)
 	saved[index_of(entry)] = enabled ? 1 : 0;
 }
 
+static void run_probes(void)
+{
+	for (size_t i = 0; i < ENTRY_COUNT; i++) {
+		if (!entries[i].probe)
+			continue;
+		char reason[256] = "";
+		const uint64_t t0 = os_gettime_ns();
+		available[i] = entries[i].probe(reason, sizeof(reason));
+		const double ms = (double)(os_gettime_ns() - t0) / 1e6;
+		if (available[i])
+			obs_log(LOG_INFO, "%s: hardware check passed (%.0f ms)", entries[i].id, ms);
+		else
+			obs_log(LOG_INFO, "%s: not available on this system, hidden (%.0f ms): %s", entries[i].id, ms,
+				reason);
+	}
+}
+
 void pr_settings_load(void)
 {
+	run_probes();
+
 	char *path = obs_module_config_path("settings.json");
 	if (!path)
 		return;

@@ -404,3 +404,47 @@ struct obs_encoder_info pr_nvenc_h264_encoder_info = {
 	.get_properties2 = pr_encoder_get_properties,
 	.type_data = (void *)&nvenc_h264_backend,
 };
+
+/* Asks the GPU driver whether it can start the H.264 10-bit 4:2:2 NVENC mode, by opening an encoder on a small
+ * frame size and closing it again. Used once at start-up to decide whether the encoder is offered. */
+bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len)
+{
+	const AVCodec *codec = avcodec_find_encoder_by_name("h264_nvenc");
+	if (!codec) {
+		snprintf(reason, reason_len, "the FFmpeg loaded by OBS has no h264_nvenc encoder");
+		return false;
+	}
+
+	AVCodecContext *cc = avcodec_alloc_context3(codec);
+	if (!cc) {
+		snprintf(reason, reason_len, "out of memory");
+		return false;
+	}
+
+	cc->pix_fmt = AV_PIX_FMT_P216LE;
+	cc->width = 256;
+	cc->height = 256;
+	cc->time_base = (AVRational){1, 30};
+	cc->framerate = (AVRational){30, 1};
+	cc->gop_size = 1;
+	cc->max_b_frames = 0;
+	cc->bit_rate = 20000000;
+	cc->rc_max_rate = 20000000;
+	cc->rc_buffer_size = 20000000;
+	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+	av_opt_set(cc->priv_data, "profile", "high422", 0);
+	av_opt_set(cc->priv_data, "preset", "p1", 0);
+	av_opt_set(cc->priv_data, "tune", "ll", 0);
+	av_opt_set(cc->priv_data, "rc", "cbr", 0);
+	av_opt_set_int(cc->priv_data, "delay", 0, 0);
+
+	const int ret = avcodec_open2(cc, codec, NULL);
+	if (ret < 0) {
+		char msg[AV_ERROR_MAX_STRING_SIZE];
+		snprintf(reason, reason_len, "%s", av_make_error_string(msg, sizeof(msg), ret));
+		avcodec_free_context(&cc);
+		return false;
+	}
+	avcodec_free_context(&cc);
+	return true;
+}

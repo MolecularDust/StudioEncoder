@@ -22,7 +22,9 @@ Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
 
 OBS's encoder list stays short by default. **Tools > StudioEncoders** opens a window listing every encoder in this plugin, split into **Recommended** (prores_aw and the NVENC H.264 encoder, both on) and **Experimental** (prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
 
-An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working.
+An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working. All encoders from this plugin start with "SE:" in OBS's encoder list so they are easy to spot.
+
+The NVENC H.264 encoder checks your graphics card when OBS starts. If the card cannot encode H.264 10-bit 4:2:2 (anything older than an RTX 50 series), the encoder is hidden from the list and shown grayed out in this window.
 
 ### H.264 10-bit 4:2:2 Intra (NVIDIA NVENC)
 

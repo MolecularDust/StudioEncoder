@@ -67,10 +67,14 @@ static void show_settings(void *)
 				continue;
 			const char *name = obs_encoder_get_display_name(entries[i].id);
 			auto *box = new QCheckBox(QString::fromUtf8(name ? name : entries[i].id));
-			box->setChecked(pr_encoder_enabled(&entries[i]));
+			const bool available = pr_encoder_available(&entries[i]);
+			box->setChecked(available && pr_encoder_enabled(&entries[i]));
+			box->setEnabled(available);
 			boxes[i] = box;
 			layout->addWidget(box);
-			layout->addWidget(make_note(T(entries[i].desc_key), 24));
+			layout->addWidget(make_note(
+				available ? T(entries[i].desc_key) : T(entries[i].desc_key) + QStringLiteral(" ") + T("Settings.Unavailable"),
+				24));
 		}
 	}
 
@@ -89,8 +93,8 @@ static void show_settings(void *)
 
 	bool changed = false;
 	for (size_t i = 0; i < count; i++) {
-		if (!boxes[i])
-			continue;
+		if (!boxes[i] || !pr_encoder_available(&entries[i]))
+			continue; /* an unavailable encoder keeps whatever was saved */
 		if (boxes[i]->isChecked() != pr_encoder_enabled(&entries[i]))
 			changed = true;
 		pr_encoder_set_enabled(&entries[i], boxes[i]->isChecked());
