@@ -14,7 +14,10 @@ add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
 find_package(FFmpeg REQUIRED COMPONENTS avcodec avutil)
-find_package(obs-frontend-api REQUIRED)
+# On Linux cmake/linux/defaults.cmake may already have created OBS::obs-frontend-api from the system OBS packages
+if(NOT TARGET OBS::obs-frontend-api)
+  find_package(obs-frontend-api REQUIRED)
+endif()
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Widgets FFmpeg::avcodec FFmpeg::avutil)
 
@@ -35,9 +38,12 @@ add_custom_target(
 )
 add_dependencies(${CMAKE_PROJECT_NAME} obs_prores_rs_build)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${RUST_LIB}")
+# system libraries required by the Rust standard library
 if(WIN32)
-  # system libraries required by the Rust standard library
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ws2_32 userenv ntdll bcrypt advapi32 kernel32)
+elseif(UNIX AND NOT APPLE)
+  find_package(Threads REQUIRED)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m rt)
 endif()
 
 target_sources(
@@ -48,8 +54,22 @@ target_sources(
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 
 # Plugin Manager metadata (Tools > Plugin Manager reads the version from data/manifest.json).
+if(WIN32)
+  set(PLUGIN_OS_ARCH "windows-x64")
+else()
+  set(PLUGIN_OS_ARCH "linux-x86_64")
+endif()
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/manifest.json.in" "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" @ONLY)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" DESTINATION "${CMAKE_PROJECT_NAME}/data" COMPONENT Runtime)
+if(WIN32)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" DESTINATION "${CMAKE_PROJECT_NAME}/data" COMPONENT Runtime)
+else()
+  # same place the template installs data/ on Linux (cmake/linux/helpers.cmake)
+  install(
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/manifest.json"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${CMAKE_PROJECT_NAME}"
+    COMPONENT Runtime
+  )
+endif()
 
 # Test program for the AW+ ProRes encoder core (not part of the plugin; build with --target prores-aw-test).
 add_executable(prores-aw-test EXCLUDE_FROM_ALL tools/prores-aw-test.c src/prores-aw.c)

@@ -9,6 +9,7 @@
 !/src
 !/tools
 !.clang-format
+!.gitattributes
 !.gersemirc
 !.gitignore
 !buildspec.json

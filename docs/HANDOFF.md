@@ -42,6 +42,31 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 
 The first configure downloads OBS 33.0.0 sources and obs-deps into `.deps\` and builds libobs, which takes a few minutes. Cargo fetches FilmCraft at the pinned commit.
 
+## Build and test on Linux (prepared 2026-11-03, not yet run on Linux)
+
+Status: the code and build files were made Linux-ready on Windows, but nothing has been compiled on Linux yet (no WSL on the laptop). The first Linux session does the first real build. Target: Mike's laptop (Core Ultra 9 185H, RTX 4070 Laptop) booted from a Linux USB SSD; Ubuntu 24.04 or newer assumed.
+
+What was prepared:
+- `CMakePresets.json` has the template's `ubuntu-x86_64` preset (Ninja, output in `build_x86_64/`). It uses the system's OBS, Qt 6 and FFmpeg development files; nothing is downloaded into `.deps` on Linux.
+- `CMakeLists.txt`: `OBS::obs-frontend-api` may already come from `cmake/linux/defaults.cmake`; the Rust static library links `Threads`, `dl`, `m`, `rt`; `manifest.json` installs next to the data files and says `linux-x86_64`.
+- C code: the MSVC-only parts already had GCC/Clang alternatives (`__builtin_cpu_supports("avx2")`, `__builtin_ctz`, `target("avx2")` functions). The NVENC encoder and its start-up check now treat an FFmpeg without the `high422` profile (older distro FFmpeg, roughly before 7.1) as "not available" instead of silently encoding 4:2:0.
+- Scripts (bash): `scripts/linux-setup-ubuntu.sh` (apt packages incl. the official OBS PPA, rustup; uses sudo, so Mike runs it), `scripts/linux-build.sh`, `scripts/linux-install.sh` (to `~/.config/obs-studio/plugins/obs-studioencoders/bin/64bit/obs-studioencoders.so` + `data/`, no sudo; removes an old `obs-prores` folder), `scripts/linux-test.sh` (AVX2 DCT self-test, byte-identical checks against the system FFmpeg's prores_aw on all profiles at 4K and 1918x1082 for both AVX2 and plain C, AVX2 vs C at the shipped rounding, speed). `linux-test.sh` was dry-run in Git Bash on Windows with the Windows test program and passed every check.
+
+Steps for the Linux session:
+1. `git clone https://github.com/MolecularDust/obs-prores.git` (private; log in with `gh auth login` or a token), `cd obs-prores`, read this file.
+2. `bash scripts/linux-setup-ubuntu.sh` (Mike runs it: sudo). Then a new terminal (for cargo).
+3. If `/usr/include/obs/obs-module.h` is missing, the OBS package has no development files: build OBS 33.0.x from source (`obsproject/obs-studio`, tag 33.0.1, Linux build instructions in its wiki) and install it, or point CMake at it with `-DCMAKE_PREFIX_PATH`.
+4. `bash scripts/linux-build.sh`. Expect first-build fixes: GCC warnings the Windows build never saw, header paths for obs-frontend-api, possibly the FFmpeg finder. Fix them in the repo (keep the Windows build working: it uses the same files).
+5. `bash scripts/linux-test.sh` (optionally with a 4K clip path, e.g. a recording from the Windows drive). All checks must pass; any DIFFERENT means a real bug (or a distro FFmpeg whose prores_aw changed: compare its version first).
+6. Close OBS, `bash scripts/linux-install.sh`, start OBS from a terminal (`obs`), check the log (Help > Log Files) for `[obs-studioencoders] loaded version`, `aw+: DCT uses AVX2`, and the NVENC line (on the RTX 4070 it should say not available). Tools > StudioEncoders should open the settings window.
+7. Record 1 minute with SE: ProRes (AW+, fast) at Proxy and LT (Settings > Advanced: Color Format P216, Rec. 709, Limited; Output: Advanced, Recording Type Standard, MOV). Check the log's repeat summary, `ffprobe` the files (apco/apcs, yuv422p10le), and decode them with `ffmpeg -v error -i file -f null -`.
+
+Linux notes:
+- Use the native OBS package, not the Flatpak: a Flatpak plugin must be packaged as a Flatpak extension (separate work).
+- Capture cards: V4L2 sources in OBS on Linux; which pixel formats each card offers there is untested. P216 output and the plugin do not depend on it.
+- The NVENC encoder needs the NVIDIA driver plus an FFmpeg that knows `high422` (7.1 or newer) and an RTX 50 card; Ubuntu 24.04's FFmpeg 6.1 will report it as not available, which is expected.
+- Windows `scripts/*.ps1` do not apply on Linux; the Windows build is unchanged (preset `windows-x64`).
+
 ## Decisions made
 
 - FFmpeg: option (a), build against the FFmpeg that obs-deps ships (avcodec 62, FFmpeg 8.x). Keep the backend seam so a bundled LGPL FFmpeg could replace it.
@@ -94,7 +119,7 @@ Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, 
 1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
-4. Linux build: not started.
+4. Linux build: prepared, not yet compiled on Linux (see "Build and test on Linux").
 5. Rust encoder speed: worth profiling; it is young code.
 
 ## Working rules agreed with Mike

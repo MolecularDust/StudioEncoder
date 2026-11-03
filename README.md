@@ -93,7 +93,7 @@ If you see overload warnings, switch to the prores_aw encoder or a lighter profi
 - Input must be P216. OBS 33 offers no other 10-bit 4:2:2 output format.
 - Frames captured after you press Stop, but still encoding, are discarded. This is expected; the recording ends at the stop point.
 - Hybrid MOV is untested.
-- Windows only for now.
+- Windows. A Linux build is prepared but not yet tested (see `docs/HANDOFF.md`, "Build and test on Linux").
 
 ## Build
 

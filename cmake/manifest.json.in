@@ -2,7 +2,7 @@
   "display_name": "StudioEncoders",
   "id": "obs-studioencoders",
   "version": "@PLUGIN_VERSION@",
-  "os_arch": "windows-x64",
+  "os_arch": "@PLUGIN_OS_ARCH@",
   "name": "obs-studioencoders",
   "description": "ProRes-compatible and NVENC H.264 10-bit 4:2:2 intra encoders for Standard recording.",
   "long_description": "Adds ProRes-compatible video encoders (FFmpeg prores_aw and prores_ks, FilmCraft and OxideAV in Rust) and an all-intra H.264 10-bit 4:2:2 encoder for NVIDIA RTX 50 series GPUs. Unofficial; not affiliated with or endorsed by Apple.",

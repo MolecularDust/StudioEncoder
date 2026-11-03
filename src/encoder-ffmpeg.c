@@ -195,7 +195,11 @@ static void *nv_create(const struct pr_params *p, char *err, size_t err_len)
 	/* SPS/PPS go to extradata for the MOV header instead of being repeated in every packet */
 	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-	av_opt_set(cc->priv_data, "profile", "high422", 0);
+	/* FFmpeg builds older than about 7.1 (common in Linux distributions) don't know this profile */
+	if (av_opt_set(cc->priv_data, "profile", "high422", 0) < 0) {
+		snprintf(err, err_len, "the FFmpeg loaded by OBS is too old for H.264 4:2:2 on NVENC (no high422 profile)");
+		goto fail;
+	}
 	av_opt_set(cc->priv_data, "preset", p->nvenc_fast ? "p1" : "p5", 0);
 	/* "hq" tuning refuses a GOP of 1 at p4-p7 ("Gop Length should be greater than number of B frames + 1") */
 	av_opt_set(cc->priv_data, "tune", "ll", 0);
@@ -432,7 +436,11 @@ bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len)
 	cc->rc_max_rate = 20000000;
 	cc->rc_buffer_size = 20000000;
 	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-	av_opt_set(cc->priv_data, "profile", "high422", 0);
+	if (av_opt_set(cc->priv_data, "profile", "high422", 0) < 0) {
+		snprintf(reason, reason_len, "this FFmpeg build has no high422 profile for h264_nvenc (needs FFmpeg 7.1 or newer)");
+		avcodec_free_context(&cc);
+		return false;
+	}
 	av_opt_set(cc->priv_data, "preset", "p1", 0);
 	av_opt_set(cc->priv_data, "tune", "ll", 0);
 	av_opt_set(cc->priv_data, "rc", "cbr", 0);
