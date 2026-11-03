@@ -12,7 +12,7 @@ sudo apt-get update
 echo "== build tools, OBS, Qt 6, FFmpeg development files, FFmpeg command line (for tests)"
 sudo apt-get install -y \
 	build-essential cmake ninja-build pkg-config git curl file \
-	obs-studio qt6-base-dev \
+	obs-studio qt6-base-dev libsimde-dev \
 	libavcodec-dev libavutil-dev libavformat-dev libswscale-dev ffmpeg
 
 if ! command -v cargo >/dev/null 2>&1; then
