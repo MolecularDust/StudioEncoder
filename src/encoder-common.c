@@ -352,8 +352,10 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 	/* backends use this to choose between frame-level and slice-level parallelism */
 	enc->params.in_flight = enc->max_depth;
 
-	/* A compressed frame is far smaller than the raw 10-bit 4:2:2 frame (HQ at 4K30 is under 4 MB). */
-	enc->packet_cap = (size_t)enc->params.width * enc->params.height + 65536;
+	/* Real footage at HQ 4K is under 4 MB per frame, but pure noise reaches about 2.5 bytes per pixel (20 MB at 4K
+	 * HQ, 8.8 MB even at Proxy). 3 bytes per pixel covers that; Windows only backs the pages a frame actually
+	 * writes, so the usual cost is a few MB per frame in flight. */
+	enc->packet_cap = (size_t)enc->params.width * enc->params.height * 3 + 1048576;
 	enc->packet_buf = bmalloc(enc->packet_cap);
 	enc->frame_interval_ns = enc->params.fps_num ? (uint64_t)enc->params.fps_den * 1000000000ULL / enc->params.fps_num
 						     : 0;
@@ -546,7 +548,7 @@ static bool check_overload(struct pr_encoder *enc, const struct encoder_frame *f
 	enc->overloaded_seconds++;
 	obs_log(LOG_WARNING,
 		"%s: OVERLOAD: OBS repeated %llu of the last %llu frames (%.0f%%) because encoding could not keep up; the "
-		"recording looks frozen there. Use the prores_aw encoder or a lighter profile.",
+		"recording looks frozen there. Use a lighter profile or a lower resolution; SE: ProRes (AW+, fast) is the lightest ProRes encoder.",
 		enc->backend->log_name, (unsigned long long)repeated, (unsigned long long)total,
 		100.0 * (double)repeated / (double)total);
 
