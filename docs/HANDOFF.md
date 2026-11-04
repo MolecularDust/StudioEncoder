@@ -64,7 +64,8 @@ Steps for the Linux session:
 Linux notes:
 - Use the native OBS package, not the Flatpak: a Flatpak plugin must be packaged as a Flatpak extension (separate work).
 - Capture cards: V4L2 sources in OBS on Linux; which pixel formats each card offers there is untested. P216 output and the plugin do not depend on it.
-- The NVENC encoder needs the NVIDIA driver plus an FFmpeg that knows `high422` (7.1 or newer) and an RTX 50 card; Ubuntu 24.04's FFmpeg 6.1 will report it as not available, which is expected.
+- The NVENC encoder needs the NVIDIA driver plus an FFmpeg whose `h264_nvenc` lists `high422` and an RTX 50 card. That depends on the FFmpeg being built against nv-codec-headers 13.0 or newer, not on the FFmpeg version alone (the "7.1 or newer" wording here was wrong): Ubuntu's FFmpeg 8.0.1 hides it, CachyOS's FFmpeg 9.0.2 has it. Check with `ffmpeg -h encoder=h264_nvenc | grep high422`.
+- Arch and derivatives: use `scripts/linux-setup-arch.sh` instead of the Ubuntu one (see "Linux results: CachyOS").
 - Windows `scripts/*.ps1` do not apply on Linux; the Windows build is unchanged (preset `windows-x64`).
 
 ## Linux results (2026-11-03/04)
@@ -102,6 +103,46 @@ Environment: Ubuntu (apt suite "resolute"), kernel 7.0.0-42-generic, OBS 33.0.0 
 - AW+ (software ProRes) is close to shippable on Linux with no kernel, FFmpeg or driver changes. Remaining work is packaging (.deb/PPA; Flatpak needs a Flatpak extension, untested), longer soaks and start/stop cycles on Linux, other distros and OBS versions, and CI.
 - NVENC 4:2:2 and true 10-bit capture on Linux depend on things outside the plugin (distro FFmpeg build flags, kernel UVC format table, OBS camera sources, vendor drivers). Do not promise them. Recordings are 10-bit 4:2:2 files either way; with an 8-bit source the content is 8-bit detail in a 10-bit file, same as on Windows.
 - A user-facing manual page for Linux was drafted (`StudioEncoders-on-Linux.md` / `.html`, kept outside the repo at the time of writing).
+
+## Linux results: CachyOS (2026-11-04)
+
+Same Ryzen 9 9950X3D / RTX 5080 desktop (Gigabyte B650 AORUS Elite AX ICE) as the Ubuntu desktop tests, now booted into CachyOS (Arch-based, rolling). Nothing in the repo was patched: the clone at `d145ee2` built and ran as is. Setup script: `scripts/linux-setup-arch.sh` (pacman); build and test scripts are the same as on Ubuntu (`linux-build.sh`, `linux-test.sh`; the preset is still called `ubuntu-x86_64`, it is generic).
+
+**Environment:** kernel 7.3.1-1-cachyos (built with Clang and ThinLTO), KDE Plasma 6.8 on Wayland, OBS 33.0.1 (repo package, native), FFmpeg 9.0.2 (`libavcodec.so.63`), `ffnvcodec-headers` 13.1.15, NVIDIA driver 615.78.08, CMake 4.4.5, Rust 1.99.1, SIMDe 0.8.2.
+
+**Build and tests**
+- Configure and build were clean against FFmpeg 9, although the code was written for FFmpeg 8. `linux-test.sh`: ALL CHECKS PASSED (AVX2 vs C DCT 0 mismatches in 4,000,000 blocks; byte-identical to this system's `prores_aw` on all four profiles at 3840x2160 and 1918x1082, AVX2 and plain C; shipped rounding AVX2 == C). Single thread 4K, ms per frame, AVX2 / plain C: Proxy 31.9 / 54.6, LT 53.0 / 83.1, 422 83.6 / 104.1, HQ 99.3 / 114.8 (slower than the Windows numbers; the machine was not idle, not re-measured).
+- OBS log: `loaded version 0.10.3`, `aw+: DCT uses AVX2` at the first recording.
+
+**Why it was easy here, compared with Ubuntu (nothing special about CachyOS, it is just newer)**
+- NVENC 10-bit 4:2:2: this FFmpeg's `h264_nvenc` lists `high422` out of the box (built against nv-codec-headers 13.x). The start-up hardware check passed in 108-114 ms and the encoder appears in OBS as "SE: H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series)". No custom FFmpeg, no `LD_LIBRARY_PATH`.
+- P010 in the kernel: `v4l2-ctl --list-formats` on the AverMedia card lists P010 (YUYV, MJPG, NV12, BGR3, P010) with a stock kernel. The Ubuntu session found an upstream UVC commit adding P010 (March 2026); not verified here which release first has it. No kernel patch needed.
+- Still not solved: OBS 33's V4L2 source cannot take P010 (see the Ubuntu findings above), so OBS picked YUYV. No patched OBS source is installed on this system, so **10-bit capture was not tested on CachyOS**; the source data in every recording below is 8-bit YUYV converted to P216 by OBS.
+- Caution on the Ubuntu "genuine 10-bit" check (about 611 luma levels, 25% divisible by 4): the YUYV recordings made here show 763-831 levels and the same 25%, so that measure does not prove a 10-bit source. The proof is the capture format in the OBS log.
+
+**Recordings** (4K, 29.97 fps, Standard MOV, P216, Rec. 709 limited; all `yuv422p10le`, full decode clean, gapless timestamps, 0 repeated frames by the plugin's own counter in every take)
+
+| Capture | Encoder | Frames | ms per frame | Video Mbit/s | Identical consecutive frames | OBS CPU (32 threads, by Mike) |
+|---|---|---|---|---|---|---|
+| Magewell (PCIe x1) | AW+ Proxy | 1822 | 18.3 | 97.7 | 16.7% | 2.3% |
+| Magewell | AW+ LT | 1830 | 25.5 | 244.7 | 16.7% | 2.9% |
+| Magewell | NVENC | 1879 | 21.2 | 201.5 | 8.0% | 0.9% |
+| AverMedia (USB, 50 fps source) | AW+ Proxy | 1814 | 18.7 | 102.9 | 0.0% | 2.7% |
+| AverMedia | AW+ LT | 1814 | 26.0 | 251.8 | 0.0% | 3.1% |
+| AverMedia | NVENC | 1806 | 21.5 | 200.1 | 0.0% | 0.9% |
+
+NVENC files: High 4:2:2 Intra, every packet a keyframe. NVENC is about 6 ms per frame slower than the Ubuntu desktop figure (15.6 ms from YUYV); cause not investigated (driver 615 vs 595, or the FFmpeg build). AW+ Proxy matches Ubuntu (18.2 ms).
+
+**Magewell Pro Capture HDMI 4K (PCI 1cd7:0012) on CachyOS**
+- Driver `ProCaptureForLinux_1.3.4458` (module 1.3.0.4458). The kernel is a Clang/ThinLTO build, so the module builds only with `make LLVM=1`; Magewell's `install.sh` uses plain `make` (GCC) and its `dkms-install.sh` registers the name `ProCapture` while `src/dkms.conf` says `ProCaptureForLinux`, so neither was used. A DKMS install with a corrected `dkms.conf` worked and rebuilds on kernel updates: `PACKAGE_NAME=ProCapture`, `PACKAGE_VERSION=1.3.4458`, `MAKE[0]="make LLVM=1 KERNELDIR=/lib/modules/${kernelver}/build"`, source copied to `/usr/src/ProCapture-1.3.4458`, plus `ProCapture.conf` (modprobe), the udev rule and `mwcap-info` / `mwcap-control` from the package. Secure Boot was off. Only the main kernel was covered (the LTS kernel has no headers installed).
+- V4L2 formats: YUYV, UYVY, NV12, YV12, YU12, RGB3/4, BGR3/4, GREY, Y16, YUV4. No 10-bit.
+- **The card sits in a PCIe x1 slot** (negotiated Gen 2, 5 GT/s, x1; the card can do x4). 4K30 YUYV needs about 497 MB/s, more than a Gen 2 x1 link delivers (about 400 MB/s usable). OBS counted 6400 captured frames in 256 s, about 25.0 fps, and the files show 16.7% identical consecutive frames (1 in 6), while the plugin counted 0 repeats. The earlier Windows note blaming a 25p camera for the same 17-18% on the desktop may be this slot limit instead; check. This board has no x4 slot; a new motherboard is on order. **Re-test the Magewell with 4K30 YUYV after the swap** (expect 0% identical frames; check `current_link_width` is 4).
+- The 8.0% in the NVENC take is not explained by a flat 25 fps cap; not investigated.
+
+**Shipping notes (from the CachyOS test)**
+- The plugin binary links the distro's FFmpeg soname (here `libavcodec.so.63`, `libavutil.so.61`; Ubuntu's FFmpeg 8 is `.62` / `.60`), so a binary built on one distro will not load on another. Options: per-distro builds, or stop linking libavcodec for the parts that do not need it (AW+ is a standalone port).
+- The NVENC encoder depends on how the distro compiled FFmpeg. The robust route is NVIDIA's NVENC API directly, loaded at run time, as OBS's own `obs-nvenc` does.
+- Also open: Flatpak extension, other distros (Fedora-based and Flatpak OBS), 10-bit capture needs an OBS V4L2 patch or a DeckLink-class source. The licence question (libobs is GPL; AW+ derives from FFmpeg's LGPL code) needs a proper look before any closed-source release.
 
 ## Decisions made
 
@@ -155,7 +196,7 @@ Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, 
 1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
-4. Linux: built and tested (see "Linux results"). Open: packaging (.deb/PPA, Flatpak extension), longer soaks, other distros, NVENC without a custom FFmpeg (call the NVENC API directly), decide whether to ship any 10-bit capture support. Also check whether the Windows build needs the `gop_size = 0` change if its FFmpeg is updated to 8.0.1 or newer.
+4. Linux: built and tested on Ubuntu and CachyOS (see "Linux results" and "Linux results: CachyOS"). Open: packaging (.deb/PPA, AUR, Flatpak extension), longer soaks, other distros, make the binary independent of the distro's libavcodec soname, NVENC without depending on the distro FFmpeg (call the NVENC API directly), decide whether to ship any 10-bit capture support, re-test the Magewell card in a PCIe x4 slot (new motherboard ordered), the licence question for a closed-source release. Also check whether the Windows build needs the `gop_size = 0` change if its FFmpeg is updated to 8.0.1 or newer.
 5. Rust encoder speed: worth profiling; it is young code.
 
 ## Working rules agreed with Mike
