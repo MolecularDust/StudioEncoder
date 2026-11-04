@@ -183,8 +183,9 @@ static void *nv_create(const struct pr_params *p, char *err, size_t err_len)
 	cc->colorspace = (enum AVColorSpace)p->color_matrix;
 	cc->color_range = p->full_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
 
-	/* all-intra: every frame an IDR frame, no B-frames */
-	cc->gop_size = 1;
+	/* all-intra: every frame an IDR frame, no B-frames. gop_size 0 is NVENC's explicit intra-only mode;
+	 * with gop_size 1 FFmpeg 8.0.1 keeps the preset's B-frame interval and NVENC rejects the setup. */
+	cc->gop_size = 0;
 	cc->max_b_frames = 0;
 
 	const int64_t bitrate = (int64_t)(p->bitrate_mbps > 0 ? p->bitrate_mbps : 200) * 1000000;
@@ -430,14 +431,14 @@ bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len)
 	cc->height = 256;
 	cc->time_base = (AVRational){1, 30};
 	cc->framerate = (AVRational){30, 1};
-	cc->gop_size = 1;
+	cc->gop_size = 0; /* intra-only, see above */
 	cc->max_b_frames = 0;
 	cc->bit_rate = 20000000;
 	cc->rc_max_rate = 20000000;
 	cc->rc_buffer_size = 20000000;
 	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 	if (av_opt_set(cc->priv_data, "profile", "high422", 0) < 0) {
-		snprintf(reason, reason_len, "this FFmpeg build has no high422 profile for h264_nvenc (needs FFmpeg 7.1 or newer)");
+		snprintf(reason, reason_len, "this FFmpeg build has no high422 profile for h264_nvenc (it must be built with nv-codec-headers 13.0 or newer)");
 		avcodec_free_context(&cc);
 		return false;
 	}

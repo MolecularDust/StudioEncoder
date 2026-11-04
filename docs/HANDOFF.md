@@ -42,9 +42,9 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 
 The first configure downloads OBS 33.0.0 sources and obs-deps into `.deps\` and builds libobs, which takes a few minutes. Cargo fetches FilmCraft at the pinned commit.
 
-## Build and test on Linux (prepared 2026-11-03, not yet run on Linux)
+## Build and test on Linux (prepared 2026-11-03, built and tested on Linux 2026-11-03/04)
 
-Status: the code and build files were made Linux-ready on Windows, but nothing has been compiled on Linux yet (no WSL on the laptop). The first Linux session does the first real build. Target: Mike's laptop (Core Ultra 9 185H, RTX 4070 Laptop) booted from a Linux USB SSD; Ubuntu 24.04 or newer assumed.
+Status: built and tested on Linux. Results are in "Linux results" below. Short version: the AW+ ProRes encoder works on stock Ubuntu with no patching; the NVENC encoder and 10-bit capture need non-stock pieces (see below). The instructions below are the original plan; the only correction is that `libsimde-dev` was missing from the setup script (added, commit fa8fece). Original target: Mike's laptop (Core Ultra 9 185H, RTX 4070 Laptop) booted from a Linux USB SSD; also tested on the Ryzen 9 9950X3D / RTX 5080 desktop (same Linux install).
 
 What was prepared:
 - `CMakePresets.json` has the template's `ubuntu-x86_64` preset (Ninja, output in `build_x86_64/`). It uses the system's OBS, Qt 6 and FFmpeg development files; nothing is downloaded into `.deps` on Linux.
@@ -66,6 +66,42 @@ Linux notes:
 - Capture cards: V4L2 sources in OBS on Linux; which pixel formats each card offers there is untested. P216 output and the plugin do not depend on it.
 - The NVENC encoder needs the NVIDIA driver plus an FFmpeg that knows `high422` (7.1 or newer) and an RTX 50 card; Ubuntu 24.04's FFmpeg 6.1 will report it as not available, which is expected.
 - Windows `scripts/*.ps1` do not apply on Linux; the Windows build is unchanged (preset `windows-x64`).
+
+## Linux results (2026-11-03/04)
+
+Environment: Ubuntu (apt suite "resolute"), kernel 7.0.0-42-generic, OBS 33.0.0 from the official PPA (native, not Flatpak), system FFmpeg 8.0.1-3ubuntu2, GCC 15.2, CMake 4.2.3, Rust 1.99.1 (rustup), NVIDIA driver 595.99.02 on the desktop.
+
+**Build and tests (no patching needed)**
+- `linux-build.sh` compiled cleanly on the first try once `libsimde-dev` was installed (libobs needs SIMDe headers to configure).
+- `linux-test.sh`: ALL CHECKS PASSED. AVX2 DCT vs C: 4,000,000 blocks, 0 mismatches. Rounding off: byte-identical to the system FFmpeg prores_aw on all 4 profiles at 3840x2160 and 1918x1082, both AVX2 and plain C. Shipped rounding: AVX2 == C on all profiles. Single-thread 4K on the laptop under the `powersave` governor (slower than the Windows numbers): Proxy 42.4 ms AVX2 / 65.7 C, LT 70.9 / 101.2, 422 113.2 / 127.1, HQ 132.8 / 141.3.
+- The plugin loads in OBS 33 (`loaded version 0.10.3`, `aw+: DCT uses AVX2`). Not checked: the Tools > StudioEncoders settings window.
+- Recordings of a looped synthetic noisy 4K clip (laptop, P216, MOV): Proxy 1842 frames, 0 repeats, 39 ms per frame, 297 Mbit/s, OBS CPU 18%. LT 1891 frames, 14 repeats (0.7%, starting about 48 s in), 68 ms per frame, 624 Mbit/s, CPU 24%. Likely the powersave governor plus a very noisy clip; not re-tested with a performance governor. Both files: apco/apcs, yuv422p10le, bt709, decode clean.
+- Desktop (RTX 5080), AW+ Proxy 4K 30: 1823 frames, 18.2 ms per frame, 0 repeats.
+- Test tips: OBS 33 reads the active profile and scene collection from `user.ini` `[Basic]` (Profile, ProfileDir, SceneCollection, SceneCollectionFile). `obs --startrecording` works. SIGTERM/SIGINT do not stop OBS cleanly and leave an unfinalized MOV; stop through obs-websocket (`StopRecord`) instead. Delete `~/.config/obs-studio/.sentinel*` before a scripted start, or OBS waits at the safe-mode prompt. The test driver script was not added to the repo.
+
+**NVENC H.264 10-bit 4:2:2 on Linux**
+- Cause of "hidden / grayed out": Ubuntu's FFmpeg 8.0.1 `h264_nvenc` lists only baseline/main/high/high444p. FFmpeg's NVENC 4:2:2 support exists in the 8.0.1 source but is compiled in only when FFmpeg is built against nv-codec-headers 13.0 or newer. The old probe message "needs FFmpeg 7.1 or newer" was wrong and is corrected.
+- Workaround used: FFmpeg 8.0.1 built with nv-codec-headers n13.0.19.0 into `~/nvenc-ffmpeg/prefix` (`--enable-shared --disable-x86asm --disable-doc --enable-nvenc`, no zlib so no PNG decoder, which only affects OBS interface images), and OBS started with `LD_LIBRARY_PATH` pointing at it (`obs-with-nvenc.sh`). A normal OBS start uses the system FFmpeg and the encoder is hidden again ("(Deprecated)" label on a profile that already uses it, or the "FFmpeg loaded by OBS is too old" error).
+- Code change needed (also relevant to Windows if its FFmpeg is 8.0.1 or newer): with `gop_size = 1` FFmpeg 8.0.1's nvenc.c keeps the preset's B-frame interval and NVENC rejects it ("Gop Length should be greater than number of B frames + 1"). Intra-only needs `gop_size = 0` (gopLength 1, frameIntervalP 0). Changed in both the encoder setup and the probe in `src/encoder-ffmpeg.c`. Uncommitted at the time of writing.
+- Results on the desktop: from 8-bit YUYV, 1828 frames, 15.6 ms per frame, 0 repeats, 200 Mbit/s. From P010 capture, 60 s: 1835 frames, all I, High 4:2:2 Intra yuv422p10le, 202.9 Mbit/s, 15.7 ms per frame, 0 repeats, 0 duplicated frames, full decode clean, about 611 distinct luma levels with 25% divisible by 4 (genuine 10-bit data).
+- Not shippable as is: no distro FFmpeg has this. Realistic routes are calling NVIDIA's NVENC API directly (as OBS's own obs-nvenc does) or shipping a private FFmpeg; the plugin runs in OBS's process and shares OBS's libavcodec, so a private FFmpeg is awkward.
+
+**Capture cards and 10-bit on Linux**
+- AverMedia Live Gamer Ultra 2.1 (07ca:2553) is a UVC device with no vendor Linux driver. Its USB descriptor lists YUY2, NV12, MJPEG and P010 (GUID 30313050-...), but the stock `uvcvideo` drops P010, so only 8-bit formats appear. (07ca:d553 is the card's RGB-lighting HID controller, not a video device.) P010 is 4:2:0, so this card can never give 10-bit 4:2:2.
+- Speed on the laptop (4K): YUYV 18 fps, NV12 24 fps, P010 12 fps (about 295 MB/s ceiling) even though the link is 10 Gbps; 1080p/1440p run at full rate; 4K MJPG runs at 60 fps. Raising the UVC transfer buffers (16 URBs x 512 packets) gained only about 5%. On the Ryzen desktop the same card delivers 4K YUYV, NV12 and P010 at a full 30 fps (P010 needs about 750 MB/s), so the limit was the laptop's USB path, not the card or the Linux driver.
+- A first Linux recording from the card at 4K YUYV had 46% exact duplicate frames (the source delivered about 16 fps; OBS "Leave Unchanged" had picked 50 fps). The Windows recordings from the same card (e.g. `2026-11-03 13-09-45.mov`, `14-10-19.mov`, `14-11-38.mov`) have 0 duplicates, so the Windows driver sustains 4K 30 on that laptop and the Linux driver does not.
+- OBS 33's Linux sources cannot take P010: `plugins/linux-v4l2` (`v4l2_to_obs_video_format`) maps only YVYU, YUYV, UYVY, NV12, I420/YV12, BGRX/BGRA and BGR24 and hides every other format; `linux-pipewire` has only 8-bit formats plus two 10-bit RGB ones. OBS core itself supports P010 sources (GS_R16 plane plus GS_RG16 chroma plane).
+- Magewell Pro Capture HDMI 4K on Linux (Magewell driver 1.3.0.4458, V4L2): only 8-bit formats (YUYV, UYVY, NV12, YV12, YU12, RGB3, RGB4, BGR3, BGR4, GREY, Y16, YUV4). No 10-bit colour format through V4L2.
+- DeckLink: OBS 30 added 10-bit DeckLink capture; not tested here. The Flatpak OBS cannot use Blackmagic hardware.
+- Experiment that got P010 into OBS (not in the repo; sources live under the home folder on the Linux install: `~/uvc-p010`, `~/obs-v4l2-10bit`, `~/nvenc-ffmpeg`):
+  1. Kernel: add a P010 entry (GUID `30313050-0000-0010-8000-00aa00389b71`, fcc `V4L2_PIX_FMT_P010`) to `uvc_fmts[]` in `drivers/media/common/uvc.c` (v7.0; in this kernel the table lives in the separate `uvc` module). Built out of tree and loaded with `rmmod uvcvideo uvc; insmod uvc.ko; modprobe uvcvideo`. Lost at reboot.
+  2. OBS: a copy of `plugins/linux-v4l2` (33.0.0) built as a separate module `obs-v4l2-10bit` with source id `v4l2_input_p010` ("Video Capture Device (V4L2, 10-bit P010)"): P010 added to the format map and the two-plane layout. `uvcvideo` reports `bytesperline` as width x 3 for P010 (from the descriptor's 24 bits per pixel); the real stride is width x 2, and using the reported value gave a doubled, striped, green/magenta picture and froze OBS (chroma plane read past the buffer end). The source overrides the stride. Also added a "Deactivate when not showing" option: the stock Linux V4L2 source holds the device while it exists, so two sources on one card cannot both run. A plugin needs a `data/manifest.json` or OBS 33's Plugin Manager leaves its sources disabled.
+- Result: P010 4K 30 from the AverMedia on the Ryzen desktop into the NVENC encoder, clean, as above.
+
+**Assessment (for product decisions)**
+- AW+ (software ProRes) is close to shippable on Linux with no kernel, FFmpeg or driver changes. Remaining work is packaging (.deb/PPA; Flatpak needs a Flatpak extension, untested), longer soaks and start/stop cycles on Linux, other distros and OBS versions, and CI.
+- NVENC 4:2:2 and true 10-bit capture on Linux depend on things outside the plugin (distro FFmpeg build flags, kernel UVC format table, OBS camera sources, vendor drivers). Do not promise them. Recordings are 10-bit 4:2:2 files either way; with an 8-bit source the content is 8-bit detail in a 10-bit file, same as on Windows.
+- A user-facing manual page for Linux was drafted (`StudioEncoders-on-Linux.md` / `.html`, kept outside the repo at the time of writing).
 
 ## Decisions made
 
@@ -119,7 +155,7 @@ Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, 
 1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
-4. Linux build: prepared, not yet compiled on Linux (see "Build and test on Linux").
+4. Linux: built and tested (see "Linux results"). Open: packaging (.deb/PPA, Flatpak extension), longer soaks, other distros, NVENC without a custom FFmpeg (call the NVENC API directly), decide whether to ship any 10-bit capture support. Also check whether the Windows build needs the `gop_size = 0` change if its FFmpeg is updated to 8.0.1 or newer.
 5. Rust encoder speed: worth profiling; it is young code.
 
 ## Working rules agreed with Mike
