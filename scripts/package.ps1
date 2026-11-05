@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Builds obs-studioencoders-<version>-windows-x64.zip for portable OBS (unzip into the OBS folder; it contains plugins\obs-studioencoders\...).
+  Builds obs-studioencoder-<version>-windows-x64.zip for portable OBS (unzip into the OBS folder; it contains plugins\obs-studioencoder\...).
 #>
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$name = 'obs-studioencoders'
+$name = 'obs-studioencoder'
 $stage = Join-Path $root 'build_x64\package'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force (Join-Path $stage 'plugins') | Out-Null

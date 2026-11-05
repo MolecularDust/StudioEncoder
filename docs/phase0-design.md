@@ -1,4 +1,4 @@
-# Phase 0 design: OBS ProRes encoder plugin (Windows, OBS 33)
+# Phase 0 design: StudioEncoder, ProRes encoder plugin (Windows, OBS 33)
 
 Status: DRAFT for approval. No plugin code written.
 

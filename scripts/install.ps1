@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-  Installs StudioEncoders (obs-studioencoders) into the OBS 33 plugin layout and removes legacy-layout copies.
+  Installs StudioEncoder (obs-studioencoder) into the OBS 33 plugin layout and removes legacy-layout copies.
 
-  Installed OBS : C:\ProgramData\obs-studio\plugins\obs-studioencoders\obs-studioencoders.dll  (+ data\)
-  Portable OBS  : pass -Portable <OBS folder>  ->  <OBS folder>\plugins\obs-studioencoders\...
+  Installed OBS : C:\ProgramData\obs-studio\plugins\obs-studioencoder\obs-studioencoder.dll  (+ data\)
+  Portable OBS  : pass -Portable <OBS folder>  ->  <OBS folder>\plugins\obs-studioencoder\...
 
   Run from the repository root after: cmake --build build_x64 --config Release
 #>
@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$name = 'obs-studioencoders'
+$name = 'obs-studioencoder'
 $root = Split-Path -Parent $PSScriptRoot
 $stage = Join-Path $root 'build_x64\stage'
 
@@ -39,9 +39,9 @@ if ($Portable) {
   )
 }
 
-# the plugin was called obs-prores before 0.9.0: remove that copy so OBS never loads two
-$old = if ($Portable) { Join-Path $Portable "plugins\obs-prores" } else { "C:\ProgramData\obs-studio\plugins\obs-prores" }
-$legacy += $old
+# earlier names of this plugin (obs-prores, then obs-studioencoders): remove those copies so OBS never loads two
+$oldNames = @('obs-prores', 'obs-studioencoders')
+$legacy += $oldNames | ForEach-Object { if ($Portable) { Join-Path $Portable "plugins\$_" } else { "C:\ProgramData\obs-studio\plugins\$_" } }
 
 # remove legacy copies so OBS never sees two
 foreach ($p in $legacy) {

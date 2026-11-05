@@ -25,18 +25,18 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-fronten
 find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{HOME}/.cargo/bin" REQUIRED)
 set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust/target/release")
 if(WIN32)
-  set(RUST_LIB "${RUST_LIB_DIR}/obs_prores_rs.lib")
+  set(RUST_LIB "${RUST_LIB_DIR}/studioencoder_rs.lib")
 else()
-  set(RUST_LIB "${RUST_LIB_DIR}/libobs_prores_rs.a")
+  set(RUST_LIB "${RUST_LIB_DIR}/libstudioencoder_rs.a")
 endif()
 add_custom_target(
-  obs_prores_rs_build
+  studioencoder_rs_build
   COMMAND "${CARGO_EXECUTABLE}" build --release --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/rust/Cargo.toml"
   BYPRODUCTS "${RUST_LIB}"
   COMMENT "Building Rust ProRes backend"
   USES_TERMINAL
 )
-add_dependencies(${CMAKE_PROJECT_NAME} obs_prores_rs_build)
+add_dependencies(${CMAKE_PROJECT_NAME} studioencoder_rs_build)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${RUST_LIB}")
 # system libraries required by the Rust standard library
 if(WIN32)

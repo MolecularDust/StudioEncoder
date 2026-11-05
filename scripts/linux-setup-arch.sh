@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs what the StudioEncoders Linux build needs on Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro).
+# Installs what the StudioEncoder Linux build needs on Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro).
 # Run it yourself: it uses sudo. Tested on CachyOS (kernel 7.3.1, OBS 33.0.1, FFmpeg 9.0.2).
 #
 #   bash scripts/linux-setup-arch.sh

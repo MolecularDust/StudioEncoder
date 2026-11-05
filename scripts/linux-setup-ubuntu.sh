@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs what the StudioEncoders Linux build needs on Ubuntu 24.04 or newer (and derivatives).
+# Installs what the StudioEncoder Linux build needs on Ubuntu 24.04 or newer (and derivatives).
 # Run it yourself: it uses sudo and adds the official OBS Studio PPA.
 #
 #   bash scripts/linux-setup-ubuntu.sh

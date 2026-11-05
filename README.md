@@ -1,8 +1,8 @@
-# StudioEncoders: editing-friendly encoders for OBS Studio 33
+# StudioEncoder: editing-friendly encoders for OBS Studio 33
 
 An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and an all-intra H.264 encoder to **Standard** recording mode, for 4K, 10-bit, 4:2:2 recording to MOV.
 
-*Renamed in 0.9.0 (it was called obs-prores). The plugin folder is now `obs-studioencoders`; delete the old `obs-prores` folder when you update.*
+*Earlier versions used the folder names `obs-prores` and `obs-studioencoders`. The plugin folder is now `obs-studioencoder`; delete any older folder when you update.*
 
 > **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` and `prores_ks`, the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
 
@@ -19,9 +19,9 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
 
-### Choosing which encoders show up (Tools > StudioEncoders)
+### Choosing which encoders show up (Tools > StudioEncoder)
 
-OBS's encoder list stays short by default. **Tools > StudioEncoders** opens a window listing every encoder in this plugin, split into **Recommended** (AW+ and the NVENC H.264 encoder, both on) and **Experimental** (FFmpeg's original prores_aw, prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
+OBS's encoder list stays short by default. **Tools > StudioEncoder** opens a window listing every encoder in this plugin, split into **Recommended** (AW+ and the NVENC H.264 encoder, both on) and **Experimental** (FFmpeg's original prores_aw, prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
 
 An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working. All encoders from this plugin start with "SE:" in OBS's encoder list so they are easy to spot.
 
@@ -58,14 +58,14 @@ A space-saving alternative to ProRes, encoded on the GPU. Every frame is a keyfr
 
 ## Install
 
-Close OBS, then copy the `obs-studioencoders` folder from the release zip:
+Close OBS, then copy the `obs-studioencoder` folder from the release zip:
 
-- **Installed OBS:** to `C:\ProgramData\obs-studio\plugins\obs-studioencoders\`. `ProgramData` is hidden; type the path into File Explorer.
-- **Portable OBS:** to `<OBS folder>\plugins\obs-studioencoders\`, next to `bin`, `data` and `config`.
+- **Installed OBS:** to `C:\ProgramData\obs-studio\plugins\obs-studioencoder\`. `ProgramData` is hidden; type the path into File Explorer.
+- **Portable OBS:** to `<OBS folder>\plugins\obs-studioencoder\`, next to `bin`, `data` and `config`.
 
-If you had an older version, delete its `obs-prores` folder from the same place first, or OBS will load two copies.
+If you had an older version, delete its `obs-prores` or `obs-studioencoders` folder from the same place first, or OBS will load two copies.
 
-The folder must contain `obs-studioencoders.dll` and `data\locale\`. In OBS, Tools → Plugin Manager should list "StudioEncoders", and Tools → StudioEncoders opens its settings.
+The folder must contain `obs-studioencoder.dll` and `data\locale\`. In OBS, Tools → Plugin Manager should list "StudioEncoder", and Tools → StudioEncoder opens its settings.
 
 Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 marks those locations as legacy.
 

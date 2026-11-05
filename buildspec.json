@@ -27,11 +27,11 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.obs-studioencoders"
+            "bundleId": "com.example.obs-studioencoder"
         }
     },
-    "name": "obs-studioencoders",
-    "displayName": "StudioEncoders",
+    "name": "obs-studioencoder",
+    "displayName": "StudioEncoder",
     "version": "0.10.3",
     "author": "Mike",
     "website": "",

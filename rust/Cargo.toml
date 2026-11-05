@@ -1,11 +1,11 @@
 [package]
-name = "obs-prores-rs"
+name = "studioencoder-rs"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
 [lib]
-name = "obs_prores_rs"
+name = "studioencoder_rs"
 crate-type = ["staticlib"]
 
 [dependencies]
