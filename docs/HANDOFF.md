@@ -202,6 +202,7 @@ Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon 
 3. Hybrid MOV with these encoders: untested.
 4. Linux: built and tested on Ubuntu and CachyOS (see "Linux results" and "Linux results: CachyOS"). Open: packaging (.deb/PPA, AUR, Flatpak extension), longer soaks, other distros, make the binary independent of the distro's libavcodec soname, NVENC without depending on the distro FFmpeg (call the NVENC API directly), 10-bit capture on Linux (the P210 capture source is Windows-only), the licence question for a closed-source release. Also check whether the Windows build needs the `gop_size = 0` change if its FFmpeg is updated to 8.0.1 or newer.
 5. Rust encoder speed: worth profiling; it is young code.
+6. **OBS Custom Output bug filed upstream** (2026-11-05): https://github.com/obsproject/obs-studio/issues/14153. In Custom Output (FFmpeg) mode a frame still being encoded at Stop leaks into the next recording, which then fails with "Error writing packet: Invalid argument". Reproduced 5 of 20 cycles on stock OBS 33.0.1. This is OBS's bug, not StudioEncoder's or FFmpeg's. Reproduction script, test configs and the posted text are in `tools/obs-dts-repro/`. The desktop test copy (`D:\obs-dts-test`) and recordings (`E:\DOWNLOADS\dts-test`) are kept until OBS replies. Upstream replies: answer only with Mike's go-ahead.
 
 ## Working rules agreed with Mike
 
