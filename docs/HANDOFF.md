@@ -12,11 +12,12 @@ A Windows OBS 33 plugin (StudioEncoder, folder and DLL `obs-studioencoder`) that
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.10.3**.
+Current version: **0.11.0**.
 
 ## Layout
 
-- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has both FFmpeg encoders. Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`.
+- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has both FFmpeg encoders. Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
+- `tools/`: `prores-aw-test.c` (AW+ test program) and `p210-probe.cpp` (checks whether a capture card's P210 output carries real 10-bit data; build line at the top of the file).
 - `rust/`: Rust C-ABI staticlib (`src/lib.rs`) wrapping the FilmCraft crate. Built by CMake through cargo.
 - `harness/`: Rust benchmark CLI used in phase 1 (`prores-bench`).
 - `scripts/install.ps1`: installs into a portable OBS (`-Portable <folder>`), or into the system OBS at `C:\ProgramData\obs-studio\plugins`. Removes legacy-layout copies.
@@ -169,6 +170,7 @@ NVENC files: High 4:2:2 Intra, every packet a keyframe. NVENC is about 6 ms per 
 - OxideAV ProRes encoder (0.7.0): `oxideav-prores` 0.1.1 + `oxideav-core` 0.1.42 (both MIT, pinned with `=` in rust/Cargo.toml), wrapped in `rust/src/lib.rs` (`ox_create/ox_encode/ox_destroy`) and `src/encoder-oxideav.c`, id `obs_prores_oxideav`. Uses `make_encoder_with_config` so the frame header carries colour tags and frame-rate code (the simple `encode_frame_*` functions leave them blank). Fixed quantiser per profile (no rate control), one frame per thread, so it relies on the frame-parallel pipeline: laptop 4K422 about 69 fps at 22 frames at once, 328 Mbit/s, 65.6 dB (benchmark in BENCHMARK-APV-OXIDEAV.md). Tested in the test OBS: all four profiles give the right FourCC, Rec. 709 tags, decode clean. Live test on the laptop with the AverMedia card (1 min each, 422): OxideAV 519 Mbit/s, 199 ms per frame, OBS CPU 30%; prores_aw 387 Mbit/s, 74 ms per frame, CPU 12%; no repeated frames in either. Quality per bit equal when re-encoding the same camera frames, so OxideAV has no advantage; prores_aw stays the recommended encoder.
 - CPU comparison of the ProRes encoders (2026-11-03, laptop, test OBS, looped 4K clip, profile 422, 30 s window, share of 22 threads; scene alone costs 5.2%): prores_aw 15.2% (65 ms per frame, 1 repeat at start), OxideAV 31.2% (178 ms, no repeats), FilmCraft 66.0% (502 ms, 21.6% of frames repeated, overloaded). Encoder-only share: about 10%, 26% and 61%. Measured with `scripts/test-record.ps1` (prints "OBS CPU"; `-NoRecord` measures the scene alone).
 - OxideAV live on the desktop (2026-11-03, plugin 0.7.1, Magewell + GH5S, 4K 29.97, profile 422, 1 min): 591 Mbit/s (4.5 GB), 161.5 ms per frame with 16 frames in flight (up to 32), OBS CPU 16% of 32 threads, no repeated frames; ProRes 422 (`apcn`), Rec. 709 tags, decodes clean. For comparison on the desktop: prores_aw about 8% and FilmCraft about 22% (earlier versions, different scene), so OxideAV is about 2x prores_aw there (2.6x on the laptop).
+- 10-bit 4:2:2 capture source (0.11.0, Windows): the Magewell driver (1.3.0.4323) offers P210 through DirectShow, but OBS's Video Capture Device source cannot use it: libdshowcapture (OBS 33 and current master) maps formats only up to P010. `src/capture-p210.cpp` registers `studioencoder_p210_capture` ("SE: 10-bit 4:2:2 capture (P210)"): it opens the device in P210 at the chosen size and rate with a Sample Grabber + Null Renderer graph (qedit.dll, interfaces declared in the file), on its own MTA worker thread, and outputs async frames. OBS 33 accepts P216 source frames but has no conversion shader for them (`get_convert_type` returns CONVERT_NONE: nothing is drawn, recordings freeze), so each frame is converted to I210 (shift right 6, split CbCr; SSE2), 2.4 ms per 4K frame on the 9950X3D. With Color Format P216 OBS's canvas is RGBA16F, so the 10 bits reach the encoder. `tools/p210-probe.cpp` verified the card's P210 is real 10-bit with camera footage (612 distinct luma codes, lowest 2 bits non-zero in 76% of samples, no bit replication). Live test (2026-11-05, desktop, Magewell + camera, 3840x2160 29.97, AW+ 422, 20 s): 606 frames, no repeats in the log or by frame hash, `yuv422p10le`, decodes clean, picture correct. Not checked yet: whether the camera's HDMI signal itself is 10-bit (check the camera menu or the Magewell property page), audio (use a separate Audio Input Capture source), long runs and hot-plugging.
 - Linux later: keep the code portable where practical (pthreads, libobs threading). Install paths differ.
 
 ## Test results (laptop: Core Ultra 9 185H, 16 cores / 22 threads, RTX 4070 Laptop)
@@ -185,6 +187,8 @@ Setup: real 4K capture (AverMedia Live Gamer Ultra 2.1), OBS 33.0.1 portable, St
 
 Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, plugin 0.4.1, 4K 29.97, 422.
 
+Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon RX 9070 XT replaced the old board and the RTX 5080, so the NVENC encoder is hidden on this machine now. The Magewell sits in PCIE2 (chipset, PCIe 3.0 x16 slot wired x4). The manual says PCIE2 drops to x2 when SATA3_0 and SATA3_1 are both occupied; here it already ran x2 with one SSD on those ports. With both SATA SSDs on the ASMedia ports (SATA3_A1/A2) the card links at PCIe 2.0 x4, its maximum.
+
 - **prores_aw**: keeps up. OBS thread 2.2 ms per frame; about 8% CPU.
 - **Rust**: keeps up. OBS thread 2.5 ms per frame; about 22% CPU.
 - **prores_ks**: overloaded under 0.4.1 (OBS reported 88.8% skipped; growth had stopped at 17 workers). OBS's own Custom Output prores_ks kept up on this machine at 67% CPU. Re-test with 0.4.2.
@@ -196,7 +200,7 @@ Setup: Magewell Pro Capture HDMI 4K with a Panasonic GH5S, portable OBS 33.0.1, 
 1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
-4. Linux: built and tested on Ubuntu and CachyOS (see "Linux results" and "Linux results: CachyOS"). Open: packaging (.deb/PPA, AUR, Flatpak extension), longer soaks, other distros, make the binary independent of the distro's libavcodec soname, NVENC without depending on the distro FFmpeg (call the NVENC API directly), decide whether to ship any 10-bit capture support, re-test the Magewell card in a PCIe x4 slot (new motherboard ordered), the licence question for a closed-source release. Also check whether the Windows build needs the `gop_size = 0` change if its FFmpeg is updated to 8.0.1 or newer.
+4. Linux: built and tested on Ubuntu and CachyOS (see "Linux results" and "Linux results: CachyOS"). Open: packaging (.deb/PPA, AUR, Flatpak extension), longer soaks, other distros, make the binary independent of the distro's libavcodec soname, NVENC without depending on the distro FFmpeg (call the NVENC API directly), 10-bit capture on Linux (the P210 capture source is Windows-only), the licence question for a closed-source release. Also check whether the Windows build needs the `gop_size = 0` change if its FFmpeg is updated to 8.0.1 or newer.
 5. Rust encoder speed: worth profiling; it is young code.
 
 ## Working rules agreed with Mike

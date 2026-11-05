@@ -51,6 +51,12 @@ target_sources(
   PRIVATE src/plugin-main.c src/encoder-common.c src/encoder-common.h src/encoder-rust.c src/encoder-oxideav.c src/encoder-ffmpeg.c src/prores-rs.h src/settings.c src/settings.h src/settings-dialog.cpp src/prores-aw.c src/prores-aw.h src/encoder-awplus.c
 )
 
+# 10-bit 4:2:2 (P210) capture source: DirectShow, Windows only
+if(WIN32)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/capture-p210.cpp)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE strmiids ole32 oleaut32)
+endif()
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 
 # Plugin Manager metadata (Tools > Plugin Manager reads the version from data/manifest.json).

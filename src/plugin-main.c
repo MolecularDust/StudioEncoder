@@ -3,6 +3,10 @@
 
 #include "settings.h"
 
+#ifdef _WIN32
+void se_register_p210_capture(void); /* capture-p210.cpp */
+#endif
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
@@ -31,6 +35,9 @@ bool obs_module_load(void)
 			entries[i].info->caps |= OBS_ENCODER_CAP_DEPRECATED;
 		obs_register_encoder(entries[i].info);
 	}
+#ifdef _WIN32
+	se_register_p210_capture();
+#endif
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;
 }

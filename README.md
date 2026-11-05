@@ -51,6 +51,17 @@ A space-saving alternative to ProRes, encoded on the GPU. Every frame is a keyfr
 - Frames go to the GPU as P216 without conversion. At most 2 frames are in flight, because consumer NVIDIA cards limit the number of encoder sessions.
 - In an FFmpeg test on an RTX 5080 (4K 29.97 camera footage) this ran at about 77 fps at p5 and 101 fps at p1.
 
+## 10-bit 4:2:2 capture (P210), Windows
+
+OBS's own Video Capture Device source can't bring in 10-bit 4:2:2: its DirectShow capture stops at P010 (10-bit 4:2:0). Some capture cards, such as Magewell Pro Capture, offer 10-bit 4:2:2 as P210. StudioEncoder adds a source for them: **Sources > + > SE: 10-bit 4:2:2 capture (P210)**.
+
+- Pick the card under Device, or leave it on "First device that offers P210".
+- Set Resolution and Frame rate to match the camera's HDMI signal (default 3840x2160, 29.97).
+- Set **Settings > Video > Advanced > Color Format to P216** so the 10 bits reach the encoder. With P216, OBS mixes the scene in 16-bit floating point.
+- Add the card's audio with a separate Audio Input Capture source.
+
+Frames are converted from P210 to I210 for OBS: a lossless shift and plane split, about 2.4 ms per 4K frame on a Ryzen 9 9950X3D. Tested with a Magewell Pro Capture HDMI 4K at 3840x2160 29.97: no repeated frames, and the samples carry real 10-bit values. `tools/p210-probe.cpp` is a small command-line program that checks whether a card's P210 output holds real 10-bit data.
+
 ## Requirements
 
 - Windows 10/11 x64
