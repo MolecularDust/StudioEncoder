@@ -19,6 +19,10 @@ struct ff_ctx {
 	AVFrame *frame;
 	AVPacket *packet;
 	int64_t next_pts;
+	/* AMD only: the hardware returns each packet one frame late, so OBS's timestamps wait here */
+	struct pr_planes *planes;
+	int64_t pts_queue[4];
+	int queued;
 };
 
 static void ff_destroy(void *ctx)
@@ -454,6 +458,236 @@ bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len)
 		avcodec_free_context(&cc);
 		return false;
 	}
+	avcodec_free_context(&cc);
+	return true;
+}
+
+/* ---- HEVC 10-bit 4:2:0 all-intra on AMD (AMF, any Radeon with a VCN encoder) ---- */
+
+#define S_AMD_QUALITY "amd_quality"
+
+/* Constant-quality presets. Every frame is a keyframe, so the quantiser sets the file size. Typical 4K 29.97 camera
+ * footage (measured on an RX 9070 XT): Small about 28 Mbit/s, Standard about 68, High about 116, Maximum about 170.
+ * Noisy footage makes bigger files at the same quantiser. */
+static const int amd_qp[] = {22, 14, 10, 6};
+static const char *const amd_quality_names[] = {"Small", "Standard", "High", "Maximum"};
+
+static int amd_qp_for(int quality)
+{
+	if (quality < 0 || quality > 3)
+		quality = 2;
+	return amd_qp[quality];
+}
+
+/* Opens hevc_amf for 10-bit 4:2:0 intra-only on the given frame size. Shared by the encoder and the start-up check. */
+static AVCodecContext *amd_open(int width, int height, AVRational fps, int quality, const struct pr_params *p,
+				char *err, size_t err_len)
+{
+	const AVCodec *codec = avcodec_find_encoder_by_name("hevc_amf");
+	if (!codec) {
+		snprintf(err, err_len, "the FFmpeg loaded by OBS has no hevc_amf encoder");
+		return NULL;
+	}
+	AVCodecContext *cc = avcodec_alloc_context3(codec);
+	if (!cc) {
+		snprintf(err, err_len, "out of memory");
+		return NULL;
+	}
+
+	/* P010 is what OBS outputs, so frames go to the encoder without conversion */
+	cc->pix_fmt = AV_PIX_FMT_P010LE;
+	cc->width = width;
+	cc->height = height;
+	cc->time_base = (AVRational){fps.den, fps.num};
+	cc->framerate = fps;
+	if (p) {
+		cc->color_primaries = (enum AVColorPrimaries)p->color_primaries;
+		cc->color_trc = (enum AVColorTransferCharacteristic)p->color_transfer;
+		cc->colorspace = (enum AVColorSpace)p->color_matrix;
+		cc->color_range = p->full_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+	}
+
+	/* all-intra: a GOP of one frame, so every frame is an IDR frame; no B-frames */
+	cc->gop_size = 1;
+	cc->max_b_frames = 0;
+	/* VPS/SPS/PPS go to extradata for the MOV header */
+	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+	const int qp = amd_qp_for(quality);
+	/* without this, AMF writes profile Main into a 10-bit stream when started from here */
+	av_opt_set(cc->priv_data, "profile", "main10", 0);
+	av_opt_set(cc->priv_data, "rc", "cqp", 0);
+	av_opt_set_int(cc->priv_data, "qp_i", qp, 0);
+	av_opt_set_int(cc->priv_data, "qp_p", qp, 0);
+	av_opt_set(cc->priv_data, "quality", "quality", 0);
+
+	const int ret = avcodec_open2(cc, codec, NULL);
+	if (ret < 0) {
+		char msg[AV_ERROR_MAX_STRING_SIZE];
+		snprintf(err, err_len, "%s", av_make_error_string(msg, sizeof(msg), ret));
+		avcodec_free_context(&cc);
+		return NULL;
+	}
+	return cc;
+}
+
+static void *amd_create(const struct pr_params *p, char *err, size_t err_len)
+{
+	char why[200] = "";
+	struct ff_ctx *c = bzalloc(sizeof(*c));
+	c->frame = av_frame_alloc();
+	c->packet = av_packet_alloc();
+	if (!c->frame || !c->packet) {
+		snprintf(err, err_len, "out of memory");
+		goto fail;
+	}
+
+	c->cc = amd_open((int)p->width, (int)p->height, (AVRational){(int)p->fps_num, (int)p->fps_den}, p->amd_quality, p,
+			 why, sizeof(why));
+	if (!c->cc) {
+		snprintf(err, err_len,
+			 "the AMD encoder could not start HEVC 10-bit (%s). This encoder needs a Radeon graphics card "
+			 "with a current driver.",
+			 why);
+		goto fail;
+	}
+
+	c->frame->format = c->cc->pix_fmt;
+	c->frame->width = c->cc->width;
+	c->frame->height = c->cc->height;
+	if (av_frame_get_buffer(c->frame, 0) < 0) {
+		snprintf(err, err_len, "could not allocate frame buffers");
+		goto fail;
+	}
+	return c;
+
+fail:
+	ff_destroy(c);
+	return NULL;
+}
+
+static bool amd_get_planes(void *ctx, struct pr_planes *planes, char *err, size_t err_len)
+{
+	struct ff_ctx *c = ctx;
+	c->planes = planes; /* the planes live in the slot, which outlives this context's use */
+	return nv_get_planes(ctx, planes, err, err_len);
+}
+
+/* AMF returns the packet for a frame only after the next frame went in, so the first call has no packet. The
+ * timestamps of the frames waiting inside the encoder are kept in order and handed back with each packet. */
+static bool amd_encode(void *ctx, uint8_t *out, size_t out_cap, size_t *out_size, char *err, size_t err_len)
+{
+	struct ff_ctx *c = ctx;
+	char msg[AV_ERROR_MAX_STRING_SIZE];
+
+	if (c->queued >= (int)(sizeof(c->pts_queue) / sizeof(c->pts_queue[0]))) {
+		snprintf(err, err_len, "the AMD encoder is holding back more frames than expected");
+		return false;
+	}
+	c->pts_queue[c->queued++] = c->planes->pts;
+
+	c->frame->pts = c->next_pts++;
+	int ret = avcodec_send_frame(c->cc, c->frame);
+	if (ret < 0) {
+		snprintf(err, err_len, "avcodec_send_frame: %s", av_make_error_string(msg, sizeof(msg), ret));
+		return false;
+	}
+
+	ret = avcodec_receive_packet(c->cc, c->packet);
+	if (ret == AVERROR(EAGAIN)) {
+		*out_size = 0;
+		return true;
+	}
+	if (ret < 0) {
+		snprintf(err, err_len, "avcodec_receive_packet: %s", av_make_error_string(msg, sizeof(msg), ret));
+		return false;
+	}
+
+	if ((size_t)c->packet->size > out_cap) {
+		snprintf(err, err_len, "packet of %d bytes exceeds buffer of %zu", c->packet->size, out_cap);
+		av_packet_unref(c->packet);
+		return false;
+	}
+	memcpy(out, c->packet->data, (size_t)c->packet->size);
+	*out_size = (size_t)c->packet->size;
+	av_packet_unref(c->packet);
+
+	c->planes->out_pts = c->pts_queue[0];
+	c->planes->out_pts_valid = true;
+	for (int i = 1; i < c->queued; i++)
+		c->pts_queue[i - 1] = c->pts_queue[i];
+	c->queued--;
+	return true;
+}
+
+static void amd_add_properties(obs_properties_t *props)
+{
+	obs_property_t *q = obs_properties_add_list(props, S_AMD_QUALITY, obs_module_text("AmdQuality"),
+						    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(q, obs_module_text("AmdQuality.Small"), 0);
+	obs_property_list_add_int(q, obs_module_text("AmdQuality.Standard"), 1);
+	obs_property_list_add_int(q, obs_module_text("AmdQuality.High"), 2);
+	obs_property_list_add_int(q, obs_module_text("AmdQuality.Maximum"), 3);
+	obs_property_set_long_description(q, obs_module_text("AmdQuality.Description"));
+}
+
+static void amd_set_defaults(obs_data_t *settings)
+{
+	obs_data_set_default_int(settings, S_AMD_QUALITY, 2);
+}
+
+static void amd_describe(const struct pr_params *p, char *buf, size_t len)
+{
+	const int q = p->amd_quality < 0 || p->amd_quality > 3 ? 2 : p->amd_quality;
+	snprintf(buf, len, "%s (QP %d)", amd_quality_names[q], amd_qp[q]);
+}
+
+static const struct pr_backend amd_hevc_backend = {
+	.name_key = "Encoder.AmdHevc",
+	.log_name = "amd-hevc",
+	.codec_name = "hevc_amf",
+	.default_in_flight = 0, /* automatic */
+	.max_in_flight = 1,     /* one encoder, so the frame held back inside it stays in order; fast enough at 4K */
+	.prores = false,
+	.input_p010 = true,
+	.describe = amd_describe,
+	.create = amd_create,
+	.get_planes = amd_get_planes, /* semi-planar Y + interleaved CbCr, like NVENC's P216 */
+	.encode = amd_encode,
+	.destroy = ff_destroy,
+	.get_extra_data = nv_get_extra_data,
+	.add_properties = amd_add_properties,
+	.set_defaults = amd_set_defaults,
+};
+
+static void *amd_hevc_create(obs_data_t *settings, obs_encoder_t *encoder)
+{
+	return pr_encoder_create(&amd_hevc_backend, settings, encoder);
+}
+
+struct obs_encoder_info pr_amd_hevc_encoder_info = {
+	.id = "obs_prores_amd_hevc_intra",
+	.type = OBS_ENCODER_VIDEO,
+	.codec = "hevc",
+	.get_name = pr_encoder_get_name,
+	.create = amd_hevc_create,
+	.destroy = pr_encoder_destroy,
+	.encode = pr_encoder_encode,
+	.update = pr_encoder_update,
+	.get_extra_data = pr_encoder_get_extra_data,
+	.get_defaults2 = pr_encoder_get_defaults,
+	.get_properties2 = pr_encoder_get_properties,
+	.type_data = (void *)&amd_hevc_backend,
+};
+
+/* Asks the GPU driver whether it can start the HEVC 10-bit AMF mode, by opening an encoder on a small frame size and
+ * closing it again. Used once at start-up to decide whether the encoder is offered. */
+bool pr_amd_hevc_probe(char *reason, size_t reason_len)
+{
+	/* AMF refuses very small frames (256x256 fails), so ask with a normal small size */
+	AVCodecContext *cc = amd_open(640, 360, (AVRational){30, 1}, 2, NULL, reason, reason_len);
+	if (!cc)
+		return false;
 	avcodec_free_context(&cc);
 	return true;
 }

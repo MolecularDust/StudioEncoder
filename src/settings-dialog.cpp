@@ -73,7 +73,8 @@ static void show_settings(void *)
 			boxes[i] = box;
 			layout->addWidget(box);
 			layout->addWidget(make_note(
-				available ? T(entries[i].desc_key) : T(entries[i].desc_key) + QStringLiteral(" ") + T("Settings.Unavailable"),
+				available ? T(entries[i].desc_key) : T(entries[i].desc_key) + QStringLiteral(" ") +
+						T(entries[i].unavailable_key ? entries[i].unavailable_key : "Settings.Unavailable"),
 				24));
 		}
 	}

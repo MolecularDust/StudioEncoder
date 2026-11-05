@@ -201,6 +201,7 @@ static void read_settings(struct pr_params *p, obs_data_t *settings, const struc
 	p->codec_name = backend->codec_name;
 	p->bitrate_mbps = (int)obs_data_get_int(settings, "bitrate_mbps");
 	p->nvenc_fast = obs_data_get_int(settings, "nvenc_preset") == 1;
+	p->amd_quality = (int)obs_data_get_int(settings, "amd_quality");
 }
 
 /* The muxer reads the container FourCC from the encoder's own settings. Only ProRes needs one; 0 lets the muxer
@@ -296,12 +297,15 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 		return NULL;
 	}
 
-	if (voi->format != VIDEO_FORMAT_P216) {
+	const enum video_format want_format = backend->input_p010 ? VIDEO_FORMAT_P010 : VIDEO_FORMAT_P216;
+	if (voi->format != want_format) {
 		obs_log(LOG_ERROR,
-			"%s: video format is %s, but this encoder needs P216. Set Settings > Advanced > Color Format to "
-			"P216 (Rec. 709, Limited).",
-			backend->log_name, get_video_format_name(voi->format));
-		obs_encoder_set_last_error(encoder, obs_module_text("Error.WrongFormat"));
+			"%s: video format is %s, but this encoder needs %s. Set Settings > Advanced > Color Format to "
+			"%s (Rec. 709, Limited).",
+			backend->log_name, get_video_format_name(voi->format), get_video_format_name(want_format),
+			get_video_format_name(want_format));
+		obs_encoder_set_last_error(encoder, obs_module_text(backend->input_p010 ? "Error.WrongFormatP010"
+											 : "Error.WrongFormat"));
 		return NULL;
 	}
 
@@ -373,17 +377,20 @@ void *pr_encoder_create(const struct pr_backend *backend, obs_data_t *settings, 
 	char quality[64];
 	if (backend->prores)
 		snprintf(quality, sizeof(quality), "profile %s", profile_names[enc->params.profile]);
+	else if (backend->describe)
+		backend->describe(&enc->params, quality, sizeof(quality));
 	else
 		snprintf(quality, sizeof(quality), "%d Mbit/s, preset %s", enc->params.bitrate_mbps,
 			 enc->params.nvenc_fast ? "p1 (fast)" : "p5 (quality)");
+	const char *in_fmt = backend->input_p010 ? "P010" : "P216";
 	if (enc->auto_depth)
-		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, %s, P216 input, frames in flight: automatic (%d, up to %d)",
+		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, %s, %s input, frames in flight: automatic (%d, up to %d)",
 			backend->log_name, enc->params.width, enc->params.height, enc->params.fps_num, enc->params.fps_den,
-			quality, enc->depth, enc->max_depth);
+			quality, in_fmt, enc->depth, enc->max_depth);
 	else
-		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, %s, P216 input, %d frame%s in flight", backend->log_name,
-			enc->params.width, enc->params.height, enc->params.fps_num, enc->params.fps_den, quality, enc->depth,
-			enc->depth == 1 ? "" : "s");
+		obs_log(LOG_INFO, "%s: %ux%u %u/%u fps, %s, %s input, %d frame%s in flight", backend->log_name,
+			enc->params.width, enc->params.height, enc->params.fps_num, enc->params.fps_den, quality, in_fmt,
+			enc->depth, enc->depth == 1 ? "" : "s");
 	return enc;
 
 fail:
@@ -573,8 +580,9 @@ bool pr_encoder_encode(void *data, struct encoder_frame *frame, struct encoder_p
 	const uint32_t min_stride = enc->params.width * 2;
 	if (!frame->data[0] || !frame->data[1] || frame->linesize[0] < min_stride || frame->linesize[1] < min_stride) {
 		pr_log(enc, PR_LOG_ERRORS, LOG_ERROR,
-		       "frame %lld is not a P216 frame (planes %p/%p, strides %u/%u)", (long long)frame->pts,
-		       (void *)frame->data[0], (void *)frame->data[1], frame->linesize[0], frame->linesize[1]);
+		       "frame %lld is not a %s frame (planes %p/%p, strides %u/%u)", (long long)frame->pts,
+		       enc->backend->input_p010 ? "P010" : "P216", (void *)frame->data[0], (void *)frame->data[1],
+		       frame->linesize[0], frame->linesize[1]);
 		return false;
 	}
 
@@ -598,15 +606,19 @@ bool pr_encoder_encode(void *data, struct encoder_frame *frame, struct encoder_p
 		       err[0] ? err : "could not get frame buffers");
 		return false;
 	}
+	in->planes.pts = frame->pts;
+	in->planes.out_pts_valid = false;
 	if (in->planes.semi_planar) {
-		/* the encoder takes P216 as OBS delivers it: copy the Y and interleaved CbCr planes row by row */
+		/* the encoder takes P216 or P010 as OBS delivers it: copy the Y and interleaved CbCr planes row by row */
 		const size_t row_bytes = (size_t)enc->params.width * 2;
-		for (uint32_t y = 0; y < enc->params.height; y++) {
+		for (uint32_t y = 0; y < enc->params.height; y++)
 			memcpy(in->planes.y + (size_t)y * in->planes.y_stride, frame->data[0] + (size_t)y * frame->linesize[0],
 			       row_bytes);
+		/* P216 has a full-height CbCr plane, P010 a half-height one */
+		const uint32_t uv_rows = enc->backend->input_p010 ? (enc->params.height + 1) / 2 : enc->params.height;
+		for (uint32_t y = 0; y < uv_rows; y++)
 			memcpy(in->planes.uv + (size_t)y * in->planes.uv_stride,
 			       frame->data[1] + (size_t)y * frame->linesize[1], row_bytes);
-		}
 	} else {
 		pr_p216_to_planar10(frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1],
 				    enc->params.width, enc->params.height, in->planes.y, in->planes.y_stride,
@@ -640,10 +652,16 @@ bool pr_encoder_encode(void *data, struct encoder_frame *frame, struct encoder_p
 
 	/* copy out of the slot: the slot may be reused by the next submit, before OBS has read the packet */
 	memcpy(enc->packet_buf, out->out, out->out_size);
-	const int64_t out_pts = out->pts;
+	const int64_t out_pts = out->planes.out_pts_valid ? out->planes.out_pts : out->pts;
 	const size_t out_size = out->out_size;
 	const uint64_t out_enc_ns = out->enc_ns;
 	enc->free_list[enc->free_count++] = out_idx;
+
+	/* a backend with latency has nothing to hand back for its first frame */
+	if (out_size == 0) {
+		enc->call_ns += os_gettime_ns() - start;
+		return true;
+	}
 
 	const uint64_t elapsed = os_gettime_ns() - start;
 	enc->frames++;
@@ -708,7 +726,7 @@ void pr_encoder_get_defaults(obs_data_t *settings, void *type_data)
 	obs_data_set_default_int(settings, S_OVERLOAD, PR_OVERLOAD_WARN);
 	obs_data_set_default_int(settings, S_SIZING, PR_SIZING_LATE);
 	obs_data_set_default_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[PR_PROFILE_422] : 0);
-	obs_data_set_default_string(settings, S_INFO, obs_module_text("Info.Text"));
+	obs_data_set_default_string(settings, S_INFO, obs_module_text(backend->input_p010 ? "Info.TextP010" : "Info.Text"));
 	backend->set_defaults(settings);
 }
 

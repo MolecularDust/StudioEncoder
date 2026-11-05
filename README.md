@@ -1,6 +1,6 @@
 # StudioEncoder: editing-friendly encoders for OBS Studio 33
 
-An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and an all-intra H.264 encoder to **Standard** recording mode, for 4K, 10-bit, 4:2:2 recording to MOV.
+An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and all-intra GPU encoders (H.264 on NVIDIA, HEVC on AMD) to **Standard** recording mode, for 4K, 10-bit recording to MOV that edits smoothly. Most encoders here keep 4:2:2 colour; the AMD one is 10-bit 4:2:0.
 
 *Earlier versions used the folder names `obs-prores` and `obs-studioencoders`. The plugin folder is now `obs-studioencoder`; delete any older folder when you update.*
 
@@ -16,12 +16,13 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 | ProRes-compatible (Rust / FilmCraft) (experimental) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
 | ProRes (OxideAV, pure Rust) (experimental) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
 | H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
+| HEVC 10-bit Intra (AMD) | FFmpeg `hevc_amf` | 10-bit **4:2:0**, every frame a keyframe, on a Radeon GPU, with four quality presets. See below. |
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
 
 ### Choosing which encoders show up (Tools > StudioEncoder)
 
-OBS's encoder list stays short by default. **Tools > StudioEncoder** opens a window listing every encoder in this plugin, split into **Recommended** (AW+ and the NVENC H.264 encoder, both on) and **Experimental** (FFmpeg's original prores_aw, prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
+OBS's encoder list stays short by default. **Tools > StudioEncoder** opens a window listing every encoder in this plugin, split into **Recommended** (AW+ and the two GPU encoders, all on) and **Experimental** (FFmpeg's original prores_aw, prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
 
 An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working. All encoders from this plugin start with "SE:" in OBS's encoder list so they are easy to spot.
 
@@ -39,7 +40,7 @@ Measured on a 4K camera clip (PSNR, higher is better):
 | HQ | 492 Mbit/s, 71.1 dB | 560 Mbit/s, 73.5 dB | 520 Mbit/s, 72.2 dB |
 
 With rounding switched off, AW+ produces byte-identical files to FFmpeg's prores_aw (checked on all four profiles).
-The NVENC H.264 encoder checks your graphics card when OBS starts. If the card cannot encode H.264 10-bit 4:2:2 (anything older than an RTX 50 series), the encoder is hidden from the list and shown grayed out in this window.
+The two GPU encoders check your graphics card when OBS starts. If the card cannot run one (an NVIDIA card older than an RTX 50 series for the H.264 encoder, no Radeon for the HEVC encoder), that encoder is hidden from the list and shown grayed out in this window.
 
 ### H.264 10-bit 4:2:2 Intra (NVIDIA NVENC)
 
@@ -50,6 +51,24 @@ A space-saving alternative to ProRes, encoded on the GPU. Every frame is a keyfr
 - **Speed**: Quality (p5, default) or Fast (p1, slightly lower quality).
 - Frames go to the GPU as P216 without conversion. At most 2 frames are in flight, because consumer NVIDIA cards limit the number of encoder sessions.
 - In an FFmpeg test on an RTX 5080 (4K 29.97 camera footage) this ran at about 77 fps at p5 and 101 fps at p1.
+
+### HEVC 10-bit 4:2:0 Intra (AMD)
+
+For Radeon users. AMD's video encoder cannot do 4:2:2 at all (and its H.264 encoder cannot do 10-bit), so this is **10-bit 4:2:0**: the colour detail is half of what ProRes 422 keeps. Every frame is a keyframe, so every frame can be cut and scrubbed without decoding neighbours, as with ProRes, in much smaller files (High is about a third of ProRes 422 on the test clip). OBS's own "AMD HW H.265 (HEVC)" can also record 10-bit, but it needs a normal GOP and bitrate tuning; this encoder replaces that with one **Quality** choice.
+
+- **Settings > Advanced > Color Format: P010** (not P216), Rec. 709, Limited.
+- **Quality** is constant, so the file size depends on the picture. Typical sizes for 4K 29.97 camera footage:
+
+| Preset | Size | Luma PSNR on a 4K camera clip |
+|---|---|---|
+| Small | about 30 Mbit/s | 52.4 dB |
+| Standard | about 70 Mbit/s | 55.3 dB (ProRes LT: 56.2 dB at 169 Mbit/s) |
+| **High** (default) | about 120 Mbit/s | 56.7 dB |
+| Maximum | about 170 Mbit/s | 57.8 dB (the encoder's ceiling) |
+
+  The PSNR figures compare against the camera clip converted to 4:2:0, so they are fair to this encoder; ProRes keeps 4:2:2 colour that this one cannot. Noisy footage makes bigger files at the same preset.
+- Measured on a Radeon RX 9070 XT: about 3.8 ms per 4K frame, no repeated frames at 4K 29.97. The AMD encoder returns each packet one frame late, so the last frame before you press Stop is dropped.
+- Recordings are HEVC Main 10 in MOV (all frames keyframes, steady timestamps, decode without errors in FFmpeg). Not yet tried in Resolve or Premiere.
 
 ## 10-bit 4:2:2 capture (P210), Windows
 
@@ -82,7 +101,7 @@ Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 mar
 
 ## Settings
 
-1. Settings → Advanced: **Color Format P216**, Color Space Rec. 709, Color Range Limited.
+1. Settings → Advanced: **Color Format P216** (**P010** for the AMD HEVC encoder), Color Space Rec. 709, Color Range Limited.
 2. Settings → Output: Output Mode **Advanced**, Recording tab, Type **Standard**, Recording Format **MOV**.
 3. Video Encoder: one of the encoders above. In its settings:
    - **Profile** (ProRes encoders): Proxy, LT, 422 or HQ. **Bitrate** and **Speed** (NVENC encoder): see above.
@@ -101,7 +120,7 @@ If you see overload warnings, switch to the prores_aw encoder or a lighter profi
 
 ## Known limits
 
-- Input must be P216. OBS 33 offers no other 10-bit 4:2:2 output format.
+- Input must be P216 (P010 for the AMD HEVC encoder). OBS 33 offers no other 10-bit 4:2:2 output format.
 - Frames captured after you press Stop, but still encoding, are discarded. This is expected; the recording ends at the stop point.
 - Hybrid MOV is untested.
 - Windows. Linux builds and runs (tested on Ubuntu and CachyOS; see `docs/HANDOFF.md`, "Build and test on Linux" and "Linux results").

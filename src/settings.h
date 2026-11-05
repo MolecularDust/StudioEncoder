@@ -17,6 +17,8 @@ struct pr_encoder_entry {
 	/* Optional start-up check that the hardware can run this encoder; NULL = always available. On failure it
 	 * writes the reason (for the log) into the buffer. */
 	bool (*probe)(char *reason, size_t reason_len);
+	/* Locale key for the sentence shown when the probe failed; NULL = "Settings.Unavailable". */
+	const char *unavailable_key;
 };
 
 const struct pr_encoder_entry *pr_encoder_entries(size_t *count);

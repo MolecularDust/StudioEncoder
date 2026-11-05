@@ -16,7 +16,7 @@ Current version: **0.11.0**.
 
 ## Layout
 
-- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has both FFmpeg encoders. Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
+- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has the FFmpeg encoders: prores_ks/prores_aw, NVENC H.264 4:2:2 and AMD HEVC 4:2:0 (see "AMD HEVC intra encoder" below). Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
 - `tools/`: `prores-aw-test.c` (AW+ test program) and `p210-probe.cpp` (checks whether a capture card's P210 output carries real 10-bit data; build line at the top of the file).
 - `rust/`: Rust C-ABI staticlib (`src/lib.rs`) wrapping the FilmCraft crate. Built by CMake through cargo.
 - `harness/`: Rust benchmark CLI used in phase 1 (`prores-bench`).
@@ -195,8 +195,20 @@ Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon 
 - Every desktop file, from any encoder and from Custom Output alike, has about 17–18% single-frame repeats (a repeat every 5–6 frames, about 24.7 unique fps). That comes from the camera signal, not the encoders: it looks like a 25p feed into a 29.97 canvas. Fix it at the camera (29.97p) or in OBS (25 fps).
 - A fragmented MOV (Custom Muxer Settings `movflags=frag_keyframe+empty_moov+delay_moov`) froze Resolve on the timeline. Regular MOV is fine. The fragmented setting was a profile setting on that machine, not something the plugin sets.
 
+## AMD HEVC intra encoder (0.12.0, 2026-11-06)
+
+`SE: HEVC 10-bit Intra (AMD)` (`obs_prores_amd_hevc_intra`): FFmpeg `hevc_amf`, P010 in, 10-bit 4:2:0, gop_size 1 (every frame an IDR), constant quantiser, `profile=main10`. Built because AMD's VCN cannot do 4:2:2 (checked: OBS's own AMD H.264 refuses 10-bit with "Cannot perform 10-bit encode on AMD H.264 encoder"; HEVC and AV1 do 10-bit 4:2:0 only). The reason to have it is convenience: one Quality choice instead of OBS's AMF settings.
+
+- **Presets** (QP 22 / 14 / 10 / 6 = Small / Standard / High / Maximum, default High): measured on the 4K 29.97 camera clip on an RX 9070 XT, 32 / 72 / 120 / 172 Mbit/s through the plugin. QP 6 is already the ceiling (CBR 200 and 300 gave the same 170 Mbit/s). AMF's CBR was not used: it misses its target badly in intra mode (50M asked, 67M made).
+- **One frame of latency**: AMF returns the packet for a frame only after the next frame went in (checked with `-debug_ts` for every `usage` mode). The backend therefore runs one context (`max_in_flight 1`, about 3.8 ms per 4K frame, plenty) and keeps OBS's timestamps in a small queue. `encoder-common.c` accepts `out_size 0` from `encode()` as "no packet yet", and `pr_planes` carries `pts` / `out_pts`. The last frame before Stop is lost (OBS does not flush video encoders).
+- **Probe size**: AMF refuses 256x256 (`Init() failed with error 5`); the start-up check uses 640x360.
+- **Without `profile=main10`** the plugin's stream said Main (idc 1) while holding 10-bit data; the FFmpeg command line said Main 10 for the same options. Cause not found, explicit setting fixes it.
+- `encoder-common.c` now takes the input format from the backend (`input_p010`), copies a half-height CbCr plane for P010, and has per-backend log text and Info text. The NVENC path (P216) was changed only in how the plane copy loop is written; it could not be run on this machine (no NVIDIA card now), so re-test NVENC on the laptop or an RTX 50 card before release.
+- Tested on the desktop in a stock portable OBS: 212 frames recorded, all keyframes, pts steps of exactly 1001, clean FFmpeg decode, no repeated frames; wrong Color Format gives a clear error; ProRes AW+ unaffected. **Not tested**: Resolve and Premiere playback, 4K60, 8K, long recordings, AMD cards other than the RX 9070 XT, AV1 (an intra AV1 variant is possible later).
+
 ## Open items
 
+0. **AMD encoder**: Resolve/Premiere check, longer soak, NVENC re-test (see above).
 1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.

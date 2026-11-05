@@ -34,6 +34,7 @@ struct pr_params {
 	const char *codec_name; /* FFmpeg encoder name, or NULL for the Rust backend */
 	int bitrate_mbps; /* NVENC only */
 	bool nvenc_fast;  /* NVENC only: preset p1 instead of p5 */
+	int amd_quality;  /* AMD only: 0 Small, 1 Standard, 2 High, 3 Maximum */
 	uint32_t width;
 	uint32_t height;
 	uint32_t fps_num;
@@ -44,7 +45,8 @@ struct pr_params {
 	bool full_range;
 };
 
-/* Planar 10-bit 4:2:2 destination buffers owned by a backend context. Strides are in samples. */
+/* Destination buffers owned by a backend context. Strides are in samples. Planar 10-bit 4:2:2 (ProRes), or a
+ * semi-planar Y plus interleaved CbCr copy of what OBS delivers (P216 for NVENC, P010 for AMD). */
 struct pr_planes {
 	uint16_t *y;
 	uint16_t *cb;
@@ -55,6 +57,12 @@ struct pr_planes {
 	bool semi_planar;
 	uint16_t *uv;
 	size_t uv_stride;
+	/* For backends whose hardware holds a frame back (AMD AMF): the shared code sets pts (OBS's timestamp of this
+	 * frame) before encode(), and encode() reports the timestamp of the packet it returns in out_pts. An encode()
+	 * that returns out_size 0 means "no packet yet" and OBS is given nothing for that call. */
+	int64_t pts;
+	int64_t out_pts;
+	bool out_pts_valid;
 };
 
 struct pr_backend {
@@ -64,6 +72,9 @@ struct pr_backend {
 	int default_in_flight;
 	int max_in_flight; /* 0 = no limit; NVENC sessions are limited on consumer GPUs */
 	bool prores;       /* ProRes profile list and container FourCC */
+	bool input_p010;   /* takes P010 (10-bit 4:2:0) from OBS instead of P216 (10-bit 4:2:2) */
+	/* Optional: describes the quality setting for the log line written when the encoder starts. */
+	void (*describe)(const struct pr_params *params, char *buf, size_t buf_len);
 
 	/* One context is created per frame in flight; each is used by one worker thread at a time. */
 	void *(*create)(const struct pr_params *params, char *err, size_t err_len);
