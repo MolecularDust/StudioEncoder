@@ -11,6 +11,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <libavutil/hwcontext.h>
+#include <stdlib.h>
+#include <unistd.h>
+#endif
+
 struct ff_ctx {
 	AVCodecContext *cc;
 	AVFrame *frame;
@@ -20,6 +26,8 @@ struct ff_ctx {
 	struct pr_planes *planes;
 	int64_t pts_queue[4];
 	int queued;
+	/* VAAPI only (Linux): the frame in graphics memory that the CPU copy is uploaded into */
+	AVFrame *hw_frame;
 };
 
 static void ff_destroy(void *ctx)
@@ -29,6 +37,7 @@ static void ff_destroy(void *ctx)
 		return;
 	av_packet_free(&c->packet);
 	av_frame_free(&c->frame);
+	av_frame_free(&c->hw_frame);
 	avcodec_free_context(&c->cc);
 	bfree(c);
 }
@@ -297,8 +306,8 @@ static int amd_qp_for(int quality)
 }
 
 /* Opens hevc_amf for 10-bit 4:2:0 intra-only on the given frame size. Shared by the encoder and the start-up check. */
-static AVCodecContext *amd_open(int width, int height, AVRational fps, int quality, const struct pr_params *p,
-				char *err, size_t err_len)
+static AVCodecContext *amd_open_amf(int width, int height, AVRational fps, int quality, const struct pr_params *p,
+				    char *err, size_t err_len)
 {
 	const AVCodec *codec = avcodec_find_encoder_by_name("hevc_amf");
 	if (!codec) {
@@ -348,6 +357,155 @@ static AVCodecContext *amd_open(int width, int height, AVRational fps, int quali
 	return cc;
 }
 
+#ifndef _WIN32
+/* ---- Linux: the same encoder through VAAPI (Mesa on AMD, also Intel), when FFmpeg has no hevc_amf ---- */
+
+/* Opens hevc_vaapi on one DRM render node. The graphics-memory frame pool is made here and handed to the encoder. */
+static AVCodecContext *vaapi_open_on(const char *node, int width, int height, AVRational fps, int quality,
+				     const struct pr_params *p, char *err, size_t err_len)
+{
+	const AVCodec *codec = avcodec_find_encoder_by_name("hevc_vaapi");
+	if (!codec) {
+		snprintf(err, err_len, "the FFmpeg loaded by OBS has no hevc_vaapi encoder");
+		return NULL;
+	}
+
+	char msg[AV_ERROR_MAX_STRING_SIZE];
+	AVBufferRef *dev = NULL;
+	int ret = av_hwdevice_ctx_create(&dev, AV_HWDEVICE_TYPE_VAAPI, node, NULL, 0);
+	if (ret < 0) {
+		snprintf(err, err_len, "VAAPI device %s: %s", node, av_make_error_string(msg, sizeof(msg), ret));
+		return NULL;
+	}
+
+	AVBufferRef *frames = av_hwframe_ctx_alloc(dev);
+	AVCodecContext *cc = NULL;
+	if (!frames) {
+		snprintf(err, err_len, "out of memory");
+		goto fail;
+	}
+	AVHWFramesContext *fc = (AVHWFramesContext *)frames->data;
+	fc->format = AV_PIX_FMT_VAAPI;
+	fc->sw_format = AV_PIX_FMT_P010LE;
+	fc->width = width;
+	fc->height = height;
+	fc->initial_pool_size = 10;
+	ret = av_hwframe_ctx_init(frames);
+	if (ret < 0) {
+		snprintf(err, err_len, "VAAPI frames on %s: %s", node, av_make_error_string(msg, sizeof(msg), ret));
+		goto fail;
+	}
+
+	cc = avcodec_alloc_context3(codec);
+	if (!cc) {
+		snprintf(err, err_len, "out of memory");
+		goto fail;
+	}
+	cc->pix_fmt = AV_PIX_FMT_VAAPI;
+	cc->width = width;
+	cc->height = height;
+	cc->time_base = (AVRational){fps.den, fps.num};
+	cc->framerate = fps;
+	if (p) {
+		cc->color_primaries = (enum AVColorPrimaries)p->color_primaries;
+		cc->color_trc = (enum AVColorTransferCharacteristic)p->color_transfer;
+		cc->colorspace = (enum AVColorSpace)p->color_matrix;
+		cc->color_range = p->full_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+	}
+	cc->gop_size = 1;
+	cc->max_b_frames = 0;
+	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+	cc->profile = AV_PROFILE_HEVC_MAIN_10;
+	cc->hw_device_ctx = av_buffer_ref(dev);
+	cc->hw_frames_ctx = av_buffer_ref(frames);
+
+	const int qp = amd_qp_for(quality);
+	av_opt_set(cc->priv_data, "rc_mode", "CQP", 0);
+	av_opt_set_int(cc->priv_data, "qp", qp, 0);
+	/* keep the packet delay to one frame, like AMF */
+	av_opt_set_int(cc->priv_data, "async_depth", 1, 0);
+
+	ret = avcodec_open2(cc, codec, NULL);
+	if (ret < 0) {
+		snprintf(err, err_len, "hevc_vaapi on %s: %s", node, av_make_error_string(msg, sizeof(msg), ret));
+		goto fail;
+	}
+	av_buffer_unref(&frames);
+	av_buffer_unref(&dev);
+	return cc;
+
+fail:
+	avcodec_free_context(&cc);
+	av_buffer_unref(&frames);
+	av_buffer_unref(&dev);
+	return NULL;
+}
+
+/* Tries the DRM render nodes in order (or only the one named in STUDIOENCODER_VAAPI_DEVICE) and uses the first that
+ * can start the 10-bit HEVC encoder. */
+static AVCodecContext *vaapi_open(int width, int height, AVRational fps, int quality, const struct pr_params *p,
+				  char *err, size_t err_len)
+{
+	const char *forced = getenv("STUDIOENCODER_VAAPI_DEVICE");
+	char node[64];
+	char first_err[200] = "";
+	char why[200];
+
+	for (int i = forced ? -1 : 0; i < (forced ? 0 : 8); i++) {
+		if (i < 0)
+			snprintf(node, sizeof(node), "%s", forced);
+		else
+			snprintf(node, sizeof(node), "/dev/dri/renderD%d", 128 + i);
+		if (access(node, R_OK | W_OK) != 0)
+			continue;
+
+		why[0] = 0;
+		AVCodecContext *cc = vaapi_open_on(node, width, height, fps, quality, p, why, sizeof(why));
+		if (cc) {
+			static char logged[64];
+			if (strcmp(logged, node) != 0) {
+				snprintf(logged, sizeof(logged), "%s", node);
+				obs_log(LOG_INFO, "amd-hevc: using VAAPI on %s", node);
+			}
+			return cc;
+		}
+		if (!first_err[0])
+			snprintf(first_err, sizeof(first_err), "%s", why);
+	}
+	snprintf(err, err_len, "%s", first_err[0] ? first_err : "no usable VAAPI render node found in /dev/dri");
+	return NULL;
+}
+#endif
+
+/* AMF where FFmpeg has it (Windows, or Linux with AMD's AMF runtime); otherwise VAAPI on Linux. */
+static AVCodecContext *amd_open(int width, int height, AVRational fps, int quality, const struct pr_params *p,
+				char *err, size_t err_len)
+{
+	if (avcodec_find_encoder_by_name("hevc_amf")) {
+		AVCodecContext *cc = amd_open_amf(width, height, fps, quality, p, err, err_len);
+#ifdef _WIN32
+		return cc;
+#else
+		if (cc)
+			return cc;
+#endif
+	}
+#ifdef _WIN32
+	snprintf(err, err_len, "the FFmpeg loaded by OBS has no hevc_amf encoder");
+	return NULL;
+#else
+	char amf_why[200];
+	snprintf(amf_why, sizeof(amf_why), "%s", err);
+	AVCodecContext *cc = vaapi_open(width, height, fps, quality, p, err, err_len);
+	if (!cc && amf_why[0] && avcodec_find_encoder_by_name("hevc_amf")) {
+		char both[420];
+		snprintf(both, sizeof(both), "AMF: %s; VAAPI: %s", amf_why, err);
+		snprintf(err, err_len, "%s", both);
+	}
+	return cc;
+#endif
+}
+
 static void *amd_create(const struct pr_params *p, char *err, size_t err_len)
 {
 	char why[200] = "";
@@ -369,12 +527,20 @@ static void *amd_create(const struct pr_params *p, char *err, size_t err_len)
 		goto fail;
 	}
 
-	c->frame->format = c->cc->pix_fmt;
+	/* with VAAPI the encoder takes graphics-memory frames, so the CPU copy that OBS fills is plain P010 */
+	c->frame->format = c->cc->pix_fmt == AV_PIX_FMT_VAAPI ? AV_PIX_FMT_P010LE : c->cc->pix_fmt;
 	c->frame->width = c->cc->width;
 	c->frame->height = c->cc->height;
 	if (av_frame_get_buffer(c->frame, 0) < 0) {
 		snprintf(err, err_len, "could not allocate frame buffers");
 		goto fail;
+	}
+	if (c->cc->pix_fmt == AV_PIX_FMT_VAAPI) {
+		c->hw_frame = av_frame_alloc();
+		if (!c->hw_frame) {
+			snprintf(err, err_len, "out of memory");
+			goto fail;
+		}
 	}
 	return c;
 
@@ -404,7 +570,23 @@ static bool amd_encode(void *ctx, uint8_t *out, size_t out_cap, size_t *out_size
 	c->pts_queue[c->queued++] = c->planes->pts;
 
 	c->frame->pts = c->next_pts++;
-	int ret = avcodec_send_frame(c->cc, c->frame);
+	AVFrame *to_send = c->frame;
+	int ret;
+#ifndef _WIN32
+	if (c->hw_frame) {
+		av_frame_unref(c->hw_frame);
+		ret = av_hwframe_get_buffer(c->cc->hw_frames_ctx, c->hw_frame, 0);
+		if (ret >= 0)
+			ret = av_hwframe_transfer_data(c->hw_frame, c->frame, 0);
+		if (ret < 0) {
+			snprintf(err, err_len, "VAAPI upload: %s", av_make_error_string(msg, sizeof(msg), ret));
+			return false;
+		}
+		c->hw_frame->pts = c->frame->pts;
+		to_send = c->hw_frame;
+	}
+#endif
+	ret = avcodec_send_frame(c->cc, to_send);
 	if (ret < 0) {
 		snprintf(err, err_len, "avcodec_send_frame: %s", av_make_error_string(msg, sizeof(msg), ret));
 		return false;
