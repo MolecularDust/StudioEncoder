@@ -5,7 +5,6 @@
 #include <util/platform.h>
 
 extern struct obs_encoder_info pr_rust_encoder_info;
-extern struct obs_encoder_info pr_ffmpeg_aw_encoder_info;
 extern struct obs_encoder_info pr_awplus_encoder_info;
 extern struct obs_encoder_info pr_nvenc_h264_encoder_info;
 extern struct obs_encoder_info pr_oxideav_encoder_info;
@@ -24,7 +23,6 @@ static const struct pr_encoder_entry entries[] = {
 	 "Settings.UnavailableNvencHevc", true},
 	{"obs_prores_amd_hevc_intra", "Desc.AmdHevc", false, &pr_amd_hevc_encoder_info, pr_amd_hevc_probe,
 	 "Settings.UnavailableAmd", true},
-	{"obs_prores_ffmpeg_aw_original", "Desc.FFmpegAw", true, &pr_ffmpeg_aw_encoder_info, NULL},
 	{"obs_prores_rust", "Desc.Rust", true, &pr_rust_encoder_info, NULL},
 	{"obs_prores_oxideav", "Desc.OxideAV", true, &pr_oxideav_encoder_info, NULL},
 };

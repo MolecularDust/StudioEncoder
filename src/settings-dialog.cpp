@@ -73,7 +73,7 @@ static void show_settings(void *)
 			24));
 	};
 
-	/* 0 = recommended 10-bit 4:2:2, 1 = 10-bit 4:2:0 (collapsible, closed at first), 2 = experimental */
+	/* 0 = recommended 10-bit 4:2:2, 1 = 10-bit 4:2:0 and 2 = experimental (both collapsible, closed at first) */
 	auto group_of = [&](size_t i) { return entries[i].experimental ? 2 : (entries[i].yuv420 ? 1 : 0); };
 
 	for (int group = 0; group < 3; group++) {
@@ -83,43 +83,47 @@ static void show_settings(void *)
 		if (!members)
 			continue;
 
-		if (group == 1) {
-			auto *toggle = new QToolButton();
-			toggle->setText(T("Settings.Group420"));
-			toggle->setCheckable(true);
-			toggle->setChecked(false);
-			toggle->setArrowType(Qt::RightArrow);
-			toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-			toggle->setAutoRaise(true);
-			QFont font = toggle->font();
-			font.setBold(true);
-			toggle->setFont(font);
-			layout->addSpacing(10);
-			layout->addWidget(toggle, 0, Qt::AlignLeft);
-
-			auto *content = new QWidget();
-			auto *inner = new QVBoxLayout(content);
-			inner->setContentsMargins(18, 0, 0, 0);
-			inner->addWidget(make_note(T("Settings.Group420Note"), 0));
+		if (group == 0) {
+			layout->addWidget(make_heading(T("Settings.Recommended")));
 			for (size_t i = 0; i < count; i++)
 				if (group_of(i) == group)
-					add_entry(i, inner);
-			content->setVisible(false);
-			layout->addWidget(content);
-			QObject::connect(toggle, &QToolButton::toggled, &dialog, [toggle, content, &dialog](bool open) {
-				toggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-				content->setVisible(open);
-				dialog.adjustSize();
-			});
+					add_entry(i, layout);
 			continue;
 		}
 
-		layout->addWidget(make_heading(T(group == 2 ? "Settings.Experimental" : "Settings.Recommended")));
-		if (group == 2)
-			layout->addWidget(make_note(T("Settings.ExperimentalNote"), 0));
+		/* 10-bit 4:2:0 and Experimental: a heading that opens and closes its group, closed at first. The arrow
+		 * is a small text glyph so the heading stays the size of the other headings. */
+		const QString title = T(group == 1 ? "Settings.Group420" : "Settings.Experimental");
+		auto *toggle = new QToolButton();
+		toggle->setAutoRaise(true);
+		toggle->setToolButtonStyle(Qt::ToolButtonTextOnly);
+		toggle->setCursor(Qt::PointingHandCursor);
+		QFont font = toggle->font();
+		font.setBold(true);
+		toggle->setFont(font);
+		auto set_label = [toggle, title](bool open) {
+			toggle->setText(QString(QChar(open ? 0x25BE : 0x25B8)) + QStringLiteral("  ") + title);
+		};
+		set_label(false);
+		layout->addSpacing(10);
+		layout->addWidget(toggle, 0, Qt::AlignLeft);
+
+		auto *content = new QWidget();
+		auto *inner = new QVBoxLayout(content);
+		inner->setContentsMargins(18, 0, 0, 0);
+		inner->addWidget(make_note(T(group == 1 ? "Settings.Group420Note" : "Settings.ExperimentalNote"), 0));
 		for (size_t i = 0; i < count; i++)
 			if (group_of(i) == group)
-				add_entry(i, layout);
+				add_entry(i, inner);
+		content->setVisible(false);
+		layout->addWidget(content);
+
+		QObject::connect(toggle, &QToolButton::clicked, &dialog, [content, set_label, &dialog]() {
+			const bool open = content->isHidden();
+			content->setVisible(open);
+			set_label(open);
+			dialog.adjustSize();
+		});
 	}
 
 	layout->addSpacing(8);

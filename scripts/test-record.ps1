@@ -4,7 +4,7 @@
   Setup is local to _test\obs-<version>; nothing outside the repository is touched.
 #>
 param(
-  [string]$Encoder = 'obs_prores_ffmpeg_aw',   # AW+; others: obs_prores_ffmpeg_aw_original, obs_prores_rust, obs_prores_oxideav
+  [string]$Encoder = 'obs_prores_ffmpeg_aw',   # AW+; others: obs_prores_rust, obs_prores_oxideav
   [int]$Profile = 2,                         # 0 Proxy, 1 LT, 2 422, 3 HQ
   [int]$Seconds = 15,
   [int]$LogLevel = 1,

@@ -12,7 +12,7 @@ A Windows OBS 33 plugin (StudioEncoder, folder and DLL `obs-studioencoder`) that
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.14.0**.
+Current version: **0.15.0**.
 
 ## Layout
 
@@ -222,6 +222,13 @@ Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon 
 - **prores_ks removed completely** at Mike's request: it will not play in real time even on a Ryzen 9 9950X3D. Gone: the backend, its encoder info and table entry (`obs_prores_ffmpeg`), the `qscale` setting (`pr_params.qscale`, `S_QSCALE`, the locale strings) and the `ks_*` property functions. An OBS profile that still uses `obs_prores_ffmpeg` will find the encoder missing and has to pick another one. `scripts/test-record.ps1` now defaults to AW+ (`obs_prores_ffmpeg_aw`). The earlier prores_ks measurements in this file are history only. The code is in git (commit before 0.14.0) if it is ever wanted again.
 - Re-tested in the test OBS after the removal: AW+ Proxy, original prores_aw Proxy (both `apco`, clean decode) and NVENC HEVC 4:2:0 (`hvc1`, Main 10, clean decode).
 - Build note: after bumping `buildspec.json` the CMake configure step must be re-run (`cmake --preset windows-x64`) or the plugin keeps the old version number (the settings window showed 0.13.0 until then).
+
+
+## Experimental group collapsible, small arrows, original prores_aw removed (0.15.0, 2026-11-07)
+
+- The "Experimental" section is now a collapsible group closed at first, like "10-bit 4:2:0". Both group headings are flat `QToolButton`s with a small text glyph (`▸` closed, `▾` open) instead of Qt's arrow icon, which scaled with the button and looked huge. The click handler flips `content->isHidden()` and calls `adjustSize()`.
+- **The original FFmpeg prores_aw encoder is removed** at Mike's request (AW+ replaces it). Gone: `ff_create`, `ff_get_planes`, the `ffmpeg_aw_backend`, its encoder info and table entry (id `obs_prores_ffmpeg_aw_original`), and the locale strings. FilmCraft and OxideAV are the only Experimental encoders left. The shared helpers `ff_destroy` and `ff_encode` stay (the NVENC encoders use them). The byte-for-byte checks against FFmpeg's prores_aw still work: `tools/prores-aw-test.c` and `scripts/linux-test.sh` compare against the FFmpeg command line, not against the plugin's encoder.
+- Re-tested in the test OBS: AW+ Proxy and HQ, NVENC HEVC 4:2:0, FilmCraft and OxideAV record and decode cleanly; the window was checked closed and with both groups open.
 
 ## Open items
 
