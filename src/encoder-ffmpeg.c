@@ -691,3 +691,167 @@ bool pr_amd_hevc_probe(char *reason, size_t reason_len)
 	avcodec_free_context(&cc);
 	return true;
 }
+
+/* ---- HEVC 10-bit 4:2:0 all-intra on NVIDIA NVENC (any GeForce with 10-bit HEVC encoding: GTX 10 series and newer) ----
+ *
+ * For NVIDIA cards older than the RTX 50 series, which have no H.264 10-bit or 4:2:2 mode. P010 comes straight from
+ * OBS (Settings > Advanced > Color Format P010), like the AMD encoder. NVENC returns each packet right away, so it
+ * runs through the same simple path as the H.264 NVENC encoder. */
+
+/* Opens hevc_nvenc for 10-bit 4:2:0 intra-only on the given frame size. Shared by the encoder and the start-up check. */
+static AVCodecContext *nvh_open(int width, int height, AVRational fps, int bitrate_mbps, bool fast,
+				const struct pr_params *p, char *err, size_t err_len)
+{
+	const AVCodec *codec = avcodec_find_encoder_by_name("hevc_nvenc");
+	if (!codec) {
+		snprintf(err, err_len, "the FFmpeg loaded by OBS has no hevc_nvenc encoder");
+		return NULL;
+	}
+	AVCodecContext *cc = avcodec_alloc_context3(codec);
+	if (!cc) {
+		snprintf(err, err_len, "out of memory");
+		return NULL;
+	}
+
+	cc->pix_fmt = AV_PIX_FMT_P010LE; /* what OBS outputs with Color Format P010: no conversion */
+	cc->width = width;
+	cc->height = height;
+	cc->time_base = (AVRational){fps.den, fps.num};
+	cc->framerate = fps;
+	if (p) {
+		cc->color_primaries = (enum AVColorPrimaries)p->color_primaries;
+		cc->color_trc = (enum AVColorTransferCharacteristic)p->color_transfer;
+		cc->colorspace = (enum AVColorSpace)p->color_matrix;
+		cc->color_range = p->full_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+	}
+
+	/* all-intra: gop_size 0 is NVENC's explicit intra-only mode (see nv_create) */
+	cc->gop_size = 0;
+	cc->max_b_frames = 0;
+
+	const int64_t bitrate = (int64_t)(bitrate_mbps > 0 ? bitrate_mbps : 150) * 1000000;
+	cc->bit_rate = bitrate;
+	cc->rc_max_rate = bitrate;
+	cc->rc_buffer_size = (int)bitrate;
+
+	/* VPS/SPS/PPS go to extradata for the MOV header */
+	cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+	av_opt_set(cc->priv_data, "profile", "main10", 0);
+	av_opt_set(cc->priv_data, "preset", fast ? "p1" : "p5", 0);
+	av_opt_set(cc->priv_data, "tune", "ll", 0);
+	av_opt_set(cc->priv_data, "rc", "cbr", 0);
+	/* return each packet as soon as its frame is encoded: OBS never flushes video encoders */
+	av_opt_set_int(cc->priv_data, "delay", 0, 0);
+
+	const int ret = avcodec_open2(cc, codec, NULL);
+	if (ret < 0) {
+		char msg[AV_ERROR_MAX_STRING_SIZE];
+		snprintf(err, err_len, "%s", av_make_error_string(msg, sizeof(msg), ret));
+		avcodec_free_context(&cc);
+		return NULL;
+	}
+	return cc;
+}
+
+static void *nvh_create(const struct pr_params *p, char *err, size_t err_len)
+{
+	char why[200] = "";
+	struct ff_ctx *c = bzalloc(sizeof(*c));
+	c->frame = av_frame_alloc();
+	c->packet = av_packet_alloc();
+	if (!c->frame || !c->packet) {
+		snprintf(err, err_len, "out of memory");
+		goto fail;
+	}
+
+	c->cc = nvh_open((int)p->width, (int)p->height, (AVRational){(int)p->fps_num, (int)p->fps_den}, p->bitrate_mbps,
+			 p->nvenc_fast, p, why, sizeof(why));
+	if (!c->cc) {
+		snprintf(err, err_len,
+			 "NVENC could not start HEVC 10-bit (%s). This encoder needs an NVIDIA GeForce card with 10-bit "
+			 "HEVC encoding (GTX 10 series or newer) and a current driver.",
+			 why);
+		goto fail;
+	}
+
+	c->frame->format = c->cc->pix_fmt;
+	c->frame->width = c->cc->width;
+	c->frame->height = c->cc->height;
+	if (av_frame_get_buffer(c->frame, 0) < 0) {
+		snprintf(err, err_len, "could not allocate frame buffers");
+		goto fail;
+	}
+	return c;
+
+fail:
+	ff_destroy(c);
+	return NULL;
+}
+
+static void nvh_add_properties(obs_properties_t *props)
+{
+	obs_property_t *b = obs_properties_add_int(props, S_NV_BITRATE, obs_module_text("NvBitrate"), 30, 400, 10);
+	obs_property_int_set_suffix(b, " Mbit/s");
+	obs_property_set_long_description(b, obs_module_text("NvHevcBitrate.Description"));
+
+	obs_property_t *p = obs_properties_add_list(props, S_NV_PRESET, obs_module_text("NvPreset"), OBS_COMBO_TYPE_LIST,
+						    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("NvPreset.Quality"), 0);
+	obs_property_list_add_int(p, obs_module_text("NvPreset.Fast"), 1);
+}
+
+static void nvh_set_defaults(obs_data_t *settings)
+{
+	obs_data_set_default_int(settings, S_NV_BITRATE, 150);
+	obs_data_set_default_int(settings, S_NV_PRESET, 0);
+}
+
+static const struct pr_backend nvenc_hevc_backend = {
+	.name_key = "Encoder.NvencHevc",
+	.log_name = "nvenc-hevc",
+	.codec_name = "hevc_nvenc",
+	.default_in_flight = 0, /* automatic */
+	.max_in_flight = 2,     /* each frame in flight opens an NVENC session */
+	.prores = false,
+	.input_p010 = true,
+	.container_tag = FOURCC('h', 'v', 'c', '1'),
+	.create = nvh_create,
+	.get_planes = nv_get_planes, /* semi-planar Y + interleaved CbCr, like the other NVENC encoder */
+	.encode = ff_encode,
+	.destroy = ff_destroy,
+	.get_extra_data = nv_get_extra_data,
+	.add_properties = nvh_add_properties,
+	.set_defaults = nvh_set_defaults,
+};
+
+static void *nvenc_hevc_create(obs_data_t *settings, obs_encoder_t *encoder)
+{
+	return pr_encoder_create(&nvenc_hevc_backend, settings, encoder);
+}
+
+struct obs_encoder_info pr_nvenc_hevc_encoder_info = {
+	.id = "obs_prores_nvenc_hevc_intra",
+	.type = OBS_ENCODER_VIDEO,
+	.codec = "hevc",
+	.get_name = pr_encoder_get_name,
+	.create = nvenc_hevc_create,
+	.destroy = pr_encoder_destroy,
+	.encode = pr_encoder_encode,
+	.update = pr_encoder_update,
+	.get_extra_data = pr_encoder_get_extra_data,
+	.get_defaults2 = pr_encoder_get_defaults,
+	.get_properties2 = pr_encoder_get_properties,
+	.type_data = (void *)&nvenc_hevc_backend,
+};
+
+/* Asks the GPU driver whether it can start HEVC 10-bit on NVENC, by opening an encoder on a small frame and closing
+ * it again. Used once at start-up to decide whether the encoder is offered. */
+bool pr_nvenc_hevc_probe(char *reason, size_t reason_len)
+{
+	AVCodecContext *cc = nvh_open(640, 360, (AVRational){30, 1}, 20, true, NULL, reason, reason_len);
+	if (!cc)
+		return false;
+	avcodec_free_context(&cc);
+	return true;
+}

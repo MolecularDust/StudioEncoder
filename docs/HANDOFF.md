@@ -12,7 +12,7 @@ A Windows OBS 33 plugin (StudioEncoder, folder and DLL `obs-studioencoder`) that
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.11.0**.
+Current version: **0.13.0**.
 
 ## Layout
 
@@ -205,6 +205,16 @@ Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon 
 - **Without `profile=main10`** the plugin's stream said Main (idc 1) while holding 10-bit data; the FFmpeg command line said Main 10 for the same options. Cause not found, explicit setting fixes it.
 - `encoder-common.c` now takes the input format from the backend (`input_p010`), copies a half-height CbCr plane for P010, and has per-backend log text and Info text. The NVENC path (P216) was changed only in how the plane copy loop is written; it could not be run on this machine (no NVIDIA card now), so re-test NVENC on the laptop or an RTX 50 card before release.
 - Tested on the desktop in a stock portable OBS: 212 frames recorded, all keyframes, pts steps of exactly 1001, clean FFmpeg decode, no repeated frames; wrong Color Format gives a clear error; ProRes AW+ unaffected. **Not tested**: Resolve and Premiere playback, 4K60, 8K, long recordings, AMD cards other than the RX 9070 XT, AV1 (an intra AV1 variant is possible later).
+
+## NVIDIA HEVC intra encoder (0.13.0, 2026-11-07)
+
+`SE: HEVC 10-bit 4:2:0 Intra (NVIDIA NVENC)` (`obs_prores_nvenc_hevc_intra`): FFmpeg `hevc_nvenc`, P010 in (like the AMD encoder: `input_p010`, the shared code copies the half-height CbCr plane), `profile=main10`, `gop_size 0` (NVENC's explicit intra-only mode, as in the H.264 backend), CBR with the same `bitrate_mbps` / `nvenc_preset` settings as the H.264 NVENC encoder, `tune ll`, `delay 0`, max 2 frames in flight. For GeForce cards without the RTX 50 H.264 4:2:2 mode. Start-up probe `pr_nvenc_hevc_probe` opens it at 640x360 (about 96 ms).
+
+- Measured on the RTX 4070 Laptop (luma PSNR vs the 4:2:2 camera clip, 20 frames): 40 / 60 / 80 / 100 / 150 / 200 / 300 Mbit/s targets gave 39 / 58 / 77 / 98 / 145 / 203 / 274 Mbit/s at 53.6 / 55.3 / 56.5 / 57.6 / 59.4 / 60.8 / 63.0 dB; AW+ for scale: Proxy 95 Mbit/s 53.7 dB, LT 200 Mbit/s 59.6 dB, HQ 564 Mbit/s 72.2 dB. Default 150 Mbit/s is about AW+ LT's luma quality at 70% of the bits. p1 and p5 were about equally fast here (about 50 fps including raw-file reading), p1 slightly lower in quality.
+- Test OBS (looped 4K clip, 25 s each): 100 / 150 / 150 p1 / 250 Mbit/s gave 100.1 / 150.0 / 149.9 / 254.6 Mbit/s, every frame I, `Main 10`, `yuv420p10le`, 0 decode errors; 15.2 ms per frame; OBS CPU 6.7-7.1% (scene alone about 5%); one repeated frame at start-up in some takes, as with the other encoders.
+- **`hvc1` tag**: the muxer's default for HEVC in MOV is `hev1`, which Apple's players and some editors do not read. New backend field `container_tag` (FOURCC macro now in encoder-common.h) is published as `codec_type`, which the OBS muxer passes through as the sample-entry tag. Set only for this encoder. The AMD encoder (0.12.0) still writes `hev1`: not changed because it cannot be tested on this laptop; the same one-line `.container_tag` fix would apply.
+- Not tested: Resolve and Premiere playback, GTX 10/16/RTX 20/30 cards (only the RTX 4070 Laptop), RTX 50 for this encoder, 4K60, long recordings. The settings window was checked: on the laptop the new encoder is ticked and available, the RTX 50 H.264 and the AMD encoder are grayed out.
+- The NVENC H.264 4:2:2 re-test noted for 0.12.0 is still open (needs an RTX 50 card). This encoder exercises the same P010 copy loop on NVENC and it is clean, which makes a regression in the shared plane copy less likely but does not cover P216.
 
 ## Open items
 

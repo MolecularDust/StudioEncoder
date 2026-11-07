@@ -11,14 +11,18 @@ extern struct obs_encoder_info pr_awplus_encoder_info;
 extern struct obs_encoder_info pr_nvenc_h264_encoder_info;
 extern struct obs_encoder_info pr_oxideav_encoder_info;
 extern struct obs_encoder_info pr_amd_hevc_encoder_info;
+extern struct obs_encoder_info pr_nvenc_hevc_encoder_info;
 
 bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len);
 bool pr_amd_hevc_probe(char *reason, size_t reason_len);
+bool pr_nvenc_hevc_probe(char *reason, size_t reason_len);
 
 static const struct pr_encoder_entry entries[] = {
 	{"obs_prores_ffmpeg_aw", "Desc.AwPlus", false, &pr_awplus_encoder_info, NULL, NULL},
 	{"obs_prores_nvenc_h264_422_intra", "Desc.NvencH264", false, &pr_nvenc_h264_encoder_info, pr_nvenc_h264_422_probe,
 	 "Settings.Unavailable"},
+	{"obs_prores_nvenc_hevc_intra", "Desc.NvencHevc", false, &pr_nvenc_hevc_encoder_info, pr_nvenc_hevc_probe,
+	 "Settings.UnavailableNvencHevc"},
 	{"obs_prores_amd_hevc_intra", "Desc.AmdHevc", false, &pr_amd_hevc_encoder_info, pr_amd_hevc_probe,
 	 "Settings.UnavailableAmd"},
 	{"obs_prores_ffmpeg_aw_original", "Desc.FFmpegAw", true, &pr_ffmpeg_aw_encoder_info, NULL},

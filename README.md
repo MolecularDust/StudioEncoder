@@ -1,6 +1,6 @@
 # StudioEncoder: editing-friendly encoders for OBS Studio 33
 
-An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and all-intra GPU encoders (H.264 on NVIDIA, HEVC on AMD) to **Standard** recording mode, for 4K, 10-bit recording to MOV that edits smoothly. Most encoders here keep 4:2:2 colour; the AMD one is 10-bit 4:2:0.
+An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and all-intra GPU encoders (H.264 and HEVC on NVIDIA, HEVC on AMD) to **Standard** recording mode, for 4K, 10-bit recording to MOV that edits smoothly. Most encoders here keep 4:2:2 colour; the HEVC ones (for older NVIDIA cards and for AMD) are 10-bit 4:2:0.
 
 *Earlier versions used the folder names `obs-prores` and `obs-studioencoders`. The plugin folder is now `obs-studioencoder`; delete any older folder when you update.*
 
@@ -16,6 +16,7 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 | ProRes-compatible (Rust / FilmCraft) (experimental) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
 | ProRes (OxideAV, pure Rust) (experimental) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
 | H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
+| HEVC 10-bit 4:2:0 Intra (NVIDIA NVENC) | FFmpeg `hevc_nvenc` | For NVIDIA cards **older than the RTX 50 series** (no H.264 10-bit there): 10-bit **4:2:0**, every frame a keyframe, a bitrate setting. See below. |
 | HEVC 10-bit Intra (AMD) | FFmpeg `hevc_amf` | 10-bit **4:2:0**, every frame a keyframe, on a Radeon GPU, with four quality presets. See below. |
 
 Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
@@ -40,7 +41,7 @@ Measured on a 4K camera clip (PSNR, higher is better):
 | HQ | 492 Mbit/s, 71.1 dB | 560 Mbit/s, 73.5 dB | 520 Mbit/s, 72.2 dB |
 
 With rounding switched off, AW+ produces byte-identical files to FFmpeg's prores_aw (checked on all four profiles).
-The two GPU encoders check your graphics card when OBS starts. If the card cannot run one (an NVIDIA card older than an RTX 50 series for the H.264 encoder, no Radeon for the HEVC encoder), that encoder is hidden from the list and shown grayed out in this window.
+The GPU encoders check your graphics card when OBS starts. If the card cannot run one (an NVIDIA card older than an RTX 50 series for the H.264 encoder, no NVIDIA card with 10-bit HEVC for the NVIDIA HEVC encoder, no Radeon for the AMD one), that encoder is hidden from the list and shown grayed out in this window.
 
 ### H.264 10-bit 4:2:2 Intra (NVIDIA NVENC)
 
@@ -51,6 +52,15 @@ A space-saving alternative to ProRes, encoded on the GPU. Every frame is a keyfr
 - **Speed**: Quality (p5, default) or Fast (p1, slightly lower quality).
 - Frames go to the GPU as P216 without conversion. At most 2 frames are in flight, because consumer NVIDIA cards limit the number of encoder sessions.
 - In an FFmpeg test on an RTX 5080 (4K 29.97 camera footage) this ran at about 77 fps at p5 and 101 fps at p1.
+
+### HEVC 10-bit 4:2:0 Intra (NVIDIA NVENC)
+
+For NVIDIA cards **older than the RTX 50 series** (GTX 10 series and newer should work; tested on an RTX 4070 Laptop). Those cards have no H.264 10-bit mode and no 4:2:2, so this is **10-bit 4:2:0** HEVC (Main 10): the colour detail is half of what ProRes 422 keeps, but every frame is a keyframe, so it cuts and scrubs like ProRes, in smaller files. On an RTX 50 card you also get the H.264 4:2:2 encoder above, which keeps the colour detail.
+
+- **Settings > Advanced > Color Format: P010** (not P216), Rec. 709, Limited. The picture goes to the GPU as OBS produces it, with no conversion.
+- **Bitrate** (30 to 400 Mbit/s, default 150) and **Speed** (Quality p5, or Fast p1). In a test on one 4K camera clip (luma quality against the source): 100 Mbit/s measured 57.6 dB, better than ProRes Proxy (53.7 dB at 95); 150 measured 59.4 dB, about the same as AW+ LT (59.6 dB at 200) with 70% of its bits; 200 measured 60.8 dB. The Fast preset is only slightly lower in quality and about as fast on that GPU.
+- Recordings are HEVC Main 10 in MOV with the `hvc1` tag (all frames keyframes, decode without errors in FFmpeg). Not yet tried in Resolve or Premiere.
+- At most 2 frames are encoded at once, because consumer NVIDIA cards limit the number of encoder sessions. About 15 ms per 4K frame on the RTX 4070 Laptop; OBS used about 7% of the CPU (about 5% of that is the scene itself).
 
 ### HEVC 10-bit 4:2:0 Intra (AMD)
 
@@ -101,7 +111,7 @@ Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 mar
 
 ## Settings
 
-1. Settings → Advanced: **Color Format P216** (**P010** for the AMD HEVC encoder), Color Space Rec. 709, Color Range Limited.
+1. Settings → Advanced: **Color Format P216** (**P010** for the two HEVC encoders), Color Space Rec. 709, Color Range Limited.
 2. Settings → Output: Output Mode **Advanced**, Recording tab, Type **Standard**, Recording Format **MOV**.
 3. Video Encoder: one of the encoders above. In its settings:
    - **Profile** (ProRes encoders): Proxy, LT, 422 or HQ. **Bitrate** and **Speed** (NVENC encoder): see above.
@@ -120,7 +130,7 @@ If you see overload warnings, switch to the prores_aw encoder or a lighter profi
 
 ## Known limits
 
-- Input must be P216 (P010 for the AMD HEVC encoder). OBS 33 offers no other 10-bit 4:2:2 output format.
+- Input must be P216 (P010 for the HEVC encoders). OBS 33 offers no other 10-bit 4:2:2 output format.
 - Frames captured after you press Stop, but still encoding, are discarded. This is expected; the recording ends at the stop point.
 - Hybrid MOV is untested.
 - Windows. Linux builds and runs (tested on Ubuntu and CachyOS; see `docs/HANDOFF.md`, "Build and test on Linux" and "Linux results").

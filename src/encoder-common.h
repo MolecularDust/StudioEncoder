@@ -1,5 +1,8 @@
 #pragma once
 
+/* Big-endian FourCC as an integer, the form the OBS muxer expects in the "codec_type" encoder setting. */
+#define FOURCC(a, b, c, d) (((int64_t)(a) << 24) | ((int64_t)(b) << 16) | ((int64_t)(c) << 8) | (int64_t)(d))
+
 #include <obs-module.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -73,6 +76,7 @@ struct pr_backend {
 	int max_in_flight; /* 0 = no limit; NVENC sessions are limited on consumer GPUs */
 	bool prores;       /* ProRes profile list and container FourCC */
 	bool input_p010;   /* takes P010 (10-bit 4:2:0) from OBS instead of P216 (10-bit 4:2:2) */
+	int64_t container_tag; /* FourCC for the MOV sample entry (e.g. hvc1), or 0 for the muxer's default */
 	/* Optional: describes the quality setting for the log line written when the encoder starts. */
 	void (*describe)(const struct pr_params *params, char *buf, size_t buf_len);
 

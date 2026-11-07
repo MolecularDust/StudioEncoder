@@ -18,7 +18,6 @@
 
 /* ProRes FourCCs, stored the way obs-ffmpeg-mux expects "codec_type": the four characters read as a
  * big-endian integer (the muxer byte-swaps it on little-endian hosts). */
-#define FOURCC(a, b, c, d) (((int64_t)(a) << 24) | ((int64_t)(b) << 16) | ((int64_t)(c) << 8) | (int64_t)(d))
 
 static const int64_t profile_fourcc[] = {
 	FOURCC('a', 'p', 'c', 'o'), /* Proxy */
@@ -205,10 +204,11 @@ static void read_settings(struct pr_params *p, obs_data_t *settings, const struc
 }
 
 /* The muxer reads the container FourCC from the encoder's own settings. Only ProRes needs one; 0 lets the muxer
- * choose its default tag (avc1 for H.264). */
+ * choose its default tag (avc1 for H.264). HEVC asks for hvc1: the muxer's default hev1 is not read by Apple's
+ * players and some editors. */
 static void publish_codec_type(obs_data_t *settings, const struct pr_backend *backend, enum pr_profile profile)
 {
-	obs_data_set_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[profile] : 0);
+	obs_data_set_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[profile] : backend->container_tag);
 }
 
 static void *pr_worker(void *param)
