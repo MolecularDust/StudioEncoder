@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPalette>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -58,9 +59,36 @@ static void show_settings(void *)
 
 	for (int pass = 0; pass < 2; pass++) {
 		const bool experimental = pass == 1;
-		layout->addWidget(make_heading(T(experimental ? "Settings.Experimental" : "Settings.Recommended")));
-		if (experimental)
-			layout->addWidget(make_note(T("Settings.ExperimentalNote"), 0));
+		QVBoxLayout *target = layout;
+		if (experimental) {
+			/* The Experimental section is a collapsible group, collapsed by default. */
+			auto *toggle = new QToolButton;
+			toggle->setText(T("Settings.Experimental"));
+			toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+			toggle->setArrowType(Qt::RightArrow);
+			toggle->setCheckable(true);
+			toggle->setChecked(false);
+			toggle->setAutoRaise(true);
+			QFont font = toggle->font();
+			font.setBold(true);
+			toggle->setFont(font);
+			layout->addSpacing(10);
+			layout->addWidget(toggle, 0, Qt::AlignLeft);
+
+			auto *section = new QWidget;
+			section->setVisible(false);
+			target = new QVBoxLayout(section);
+			target->setContentsMargins(0, 0, 0, 0);
+			layout->addWidget(section);
+			QObject::connect(toggle, &QToolButton::toggled, &dialog, [toggle, section, &dialog](bool open) {
+				toggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+				section->setVisible(open);
+				dialog.adjustSize();
+			});
+			target->addWidget(make_note(T("Settings.ExperimentalNote"), 0));
+		} else {
+			layout->addWidget(make_heading(T("Settings.Recommended")));
+		}
 
 		for (size_t i = 0; i < count; i++) {
 			if (entries[i].experimental != experimental)
@@ -71,8 +99,8 @@ static void show_settings(void *)
 			box->setChecked(available && pr_encoder_enabled(&entries[i]));
 			box->setEnabled(available);
 			boxes[i] = box;
-			layout->addWidget(box);
-			layout->addWidget(make_note(
+			target->addWidget(box);
+			target->addWidget(make_note(
 				available ? T(entries[i].desc_key) : T(entries[i].desc_key) + QStringLiteral(" ") +
 						T(entries[i].unavailable_key ? entries[i].unavailable_key : "Settings.Unavailable"),
 				24));
