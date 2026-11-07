@@ -31,7 +31,6 @@ struct pr_params {
 	enum pr_profile profile;
 	int threads;   /* 0 = automatic; slice threads when only one frame is in flight */
 	int in_flight; /* frames encoded in parallel */
-	int qscale;    /* 0 = profile default (prores_ks only) */
 	bool vendor_apl0;
 	int log_level;
 	const char *codec_name; /* FFmpeg encoder name, or NULL for the Rust backend */

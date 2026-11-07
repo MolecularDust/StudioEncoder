@@ -4,7 +4,7 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 
 *Earlier versions used the folder names `obs-prores` and `obs-studioencoders`. The plugin folder is now `obs-studioencoder`; delete any older folder when you update.*
 
-> **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` and `prores_ks`, the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
+> **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` (and the AW+ encoder built from it), the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
 
 ## Encoders
 
@@ -12,7 +12,6 @@ An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and a
 |---|---|---|
 | SE: ProRes (AW+, fast) | AW+: FFmpeg's `prores_aw` built into the plugin, with corrected rounding | **Recommended.** Light on CPU: on CPUs with AVX2 its encoder share is about half of FFmpeg's own prores_aw, and it falls back to plain C (still faster than FFmpeg) on older or low-end CPUs. Proxy keeps fine detail; FFmpeg's prores_aw makes Proxy blurry. |
 | SE: ProRes (FFmpeg prores_aw, original) (experimental) | FFmpeg `prores_aw` from OBS | The unmodified encoder, kept for comparison. Its Proxy is blurry. |
-| ProRes (FFmpeg prores_ks) (experimental) | FFmpeg `prores_ks` | Much heavier. Needs a lot of CPU at 4K. |
 | ProRes-compatible (Rust / FilmCraft) (experimental) | [FilmCraft](https://github.com/storytold/filmcraft) Rust encoder | Experimental. Heavy CPU use at 4K. |
 | ProRes (OxideAV, pure Rust) (experimental) | [OxideAV](https://github.com/oxideav/oxideav) `oxideav-prores` | Experimental. About 2.5 times the CPU of prores_aw at 4K (30% against 12% of a 22-thread laptop) and about a third bigger files at profile 422 on live camera footage, with no quality advantage per bit. Very young code (0.1). |
 | H.264 10-bit 4:2:2 Intra (NVIDIA NVENC, RTX 50 series) | FFmpeg `h264_nvenc` | Smaller files on the GPU. Needs an **RTX 50-series** card. See below. |
@@ -23,7 +22,7 @@ Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
 
 ### Choosing which encoders show up (Tools > StudioEncoder)
 
-OBS's encoder list stays short by default. **Tools > StudioEncoder** opens a window listing every encoder in this plugin, split into **Recommended** (AW+ and the two GPU encoders, all on) and **Experimental** (FFmpeg's original prores_aw, prores_ks, FilmCraft and OxideAV, all off). Tick the ones you want and press OK; the change takes effect after you restart OBS.
+OBS's encoder list stays short by default. **Tools > StudioEncoder** opens a window listing every encoder in this plugin in three sections: **Recommended (10-bit 4:2:2)** (AW+ and the RTX 50 H.264 encoder), **10-bit 4:2:0** (the NVIDIA and AMD HEVC encoders; a collapsible group, closed until you open it) and **Experimental** (FFmpeg's original prores_aw, FilmCraft and OxideAV, off by default). Tick the ones you want and press OK; the change takes effect after you restart OBS.
 
 An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working. All encoders from this plugin start with "SE:" in OBS's encoder list so they are easy to spot.
 

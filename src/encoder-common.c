@@ -194,7 +194,6 @@ static void read_settings(struct pr_params *p, obs_data_t *settings, const struc
 		in_flight = PR_MAX_IN_FLIGHT;
 	p->in_flight = in_flight;
 
-	p->qscale = (int)obs_data_get_int(settings, "qscale");
 	p->vendor_apl0 = obs_data_get_bool(settings, "vendor_apl0");
 	p->log_level = (int)obs_data_get_int(settings, S_LOG_LEVEL);
 	p->codec_name = backend->codec_name;
@@ -456,7 +455,7 @@ bool pr_encoder_update(void *data, obs_data_t *settings)
 
 /* Automatic mode: when the oldest frame was still encoding as its turn came, allow one more frame in flight.
  * Wait for the previous change to take effect (a full pipeline of frames) before growing again. Growth only
- * happens while frames are late, up to one worker per logical CPU: stopping earlier left prores_ks short of
+ * happens while frames are late, up to one worker per logical CPU: stopping earlier left a heavy encoder short of
  * real time on a 32-thread CPU that could have kept up. */
 static void size_from_cost(struct pr_encoder *enc);
 

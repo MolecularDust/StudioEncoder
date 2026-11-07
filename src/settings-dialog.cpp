@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPalette>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -56,27 +57,69 @@ static void show_settings(void *)
 	const struct pr_encoder_entry *entries = pr_encoder_entries(&count);
 	std::vector<QCheckBox *> boxes(count, nullptr);
 
-	for (int pass = 0; pass < 2; pass++) {
-		const bool experimental = pass == 1;
-		layout->addWidget(make_heading(T(experimental ? "Settings.Experimental" : "Settings.Recommended")));
-		if (experimental)
-			layout->addWidget(make_note(T("Settings.ExperimentalNote"), 0));
+	/* one checkbox and its description for encoder i, added to the given layout */
+	auto add_entry = [&](size_t i, QVBoxLayout *into) {
+		const char *name = obs_encoder_get_display_name(entries[i].id);
+		auto *box = new QCheckBox(QString::fromUtf8(name ? name : entries[i].id));
+		const bool available = pr_encoder_available(&entries[i]);
+		box->setChecked(available && pr_encoder_enabled(&entries[i]));
+		box->setEnabled(available);
+		boxes[i] = box;
+		into->addWidget(box);
+		into->addWidget(make_note(
+			available ? T(entries[i].desc_key)
+				  : T(entries[i].desc_key) + QStringLiteral(" ") +
+					    T(entries[i].unavailable_key ? entries[i].unavailable_key : "Settings.Unavailable"),
+			24));
+	};
 
-		for (size_t i = 0; i < count; i++) {
-			if (entries[i].experimental != experimental)
-				continue;
-			const char *name = obs_encoder_get_display_name(entries[i].id);
-			auto *box = new QCheckBox(QString::fromUtf8(name ? name : entries[i].id));
-			const bool available = pr_encoder_available(&entries[i]);
-			box->setChecked(available && pr_encoder_enabled(&entries[i]));
-			box->setEnabled(available);
-			boxes[i] = box;
-			layout->addWidget(box);
-			layout->addWidget(make_note(
-				available ? T(entries[i].desc_key) : T(entries[i].desc_key) + QStringLiteral(" ") +
-						T(entries[i].unavailable_key ? entries[i].unavailable_key : "Settings.Unavailable"),
-				24));
+	/* 0 = recommended 10-bit 4:2:2, 1 = 10-bit 4:2:0 (collapsible, closed at first), 2 = experimental */
+	auto group_of = [&](size_t i) { return entries[i].experimental ? 2 : (entries[i].yuv420 ? 1 : 0); };
+
+	for (int group = 0; group < 3; group++) {
+		size_t members = 0;
+		for (size_t i = 0; i < count; i++)
+			members += group_of(i) == group;
+		if (!members)
+			continue;
+
+		if (group == 1) {
+			auto *toggle = new QToolButton();
+			toggle->setText(T("Settings.Group420"));
+			toggle->setCheckable(true);
+			toggle->setChecked(false);
+			toggle->setArrowType(Qt::RightArrow);
+			toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+			toggle->setAutoRaise(true);
+			QFont font = toggle->font();
+			font.setBold(true);
+			toggle->setFont(font);
+			layout->addSpacing(10);
+			layout->addWidget(toggle, 0, Qt::AlignLeft);
+
+			auto *content = new QWidget();
+			auto *inner = new QVBoxLayout(content);
+			inner->setContentsMargins(18, 0, 0, 0);
+			inner->addWidget(make_note(T("Settings.Group420Note"), 0));
+			for (size_t i = 0; i < count; i++)
+				if (group_of(i) == group)
+					add_entry(i, inner);
+			content->setVisible(false);
+			layout->addWidget(content);
+			QObject::connect(toggle, &QToolButton::toggled, &dialog, [toggle, content, &dialog](bool open) {
+				toggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+				content->setVisible(open);
+				dialog.adjustSize();
+			});
+			continue;
 		}
+
+		layout->addWidget(make_heading(T(group == 2 ? "Settings.Experimental" : "Settings.Recommended")));
+		if (group == 2)
+			layout->addWidget(make_note(T("Settings.ExperimentalNote"), 0));
+		for (size_t i = 0; i < count; i++)
+			if (group_of(i) == group)
+				add_entry(i, layout);
 	}
 
 	layout->addSpacing(8);

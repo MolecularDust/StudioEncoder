@@ -4,7 +4,7 @@
   Setup is local to _test\obs-<version>; nothing outside the repository is touched.
 #>
 param(
-  [string]$Encoder = 'obs_prores_ffmpeg',   # or obs_prores_rust
+  [string]$Encoder = 'obs_prores_ffmpeg_aw',   # AW+; others: obs_prores_ffmpeg_aw_original, obs_prores_rust, obs_prores_oxideav
   [int]$Profile = 2,                         # 0 Proxy, 1 LT, 2 422, 3 HQ
   [int]$Seconds = 15,
   [int]$LogLevel = 1,
@@ -56,7 +56,7 @@ RecEncoder=$Encoder
 RecTracks=1
 "@ | Set-Content (Join-Path $prof 'basic.ini') -Encoding utf8
 $inflightJson = if ($InFlight -gt 0) { ",`"in_flight`":$InFlight" } else { "" }
-$encJson = if ($EncoderJson) { $EncoderJson } else { "{`"profile`":$Profile,`"threads`":0,`"log_level`":$LogLevel,`"qscale`":0,`"vendor_apl0`":true,`"overload_action`":$Overload,`"inflight_sizing`":$Sizing$inflightJson}" }
+$encJson = if ($EncoderJson) { $EncoderJson } else { "{`"profile`":$Profile,`"threads`":0,`"log_level`":$LogLevel,`"vendor_apl0`":true,`"overload_action`":$Overload,`"inflight_sizing`":$Sizing$inflightJson}" }
 $encJson | Set-Content (Join-Path $prof 'recordEncoder.json') -Encoding utf8
 if ($Clip) {
   # loop a real recording; hardware decoding off so the CPU load resembles a capture source plus decode

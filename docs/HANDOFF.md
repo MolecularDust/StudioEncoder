@@ -7,16 +7,16 @@ For a new Claude Code session on another machine. Read this first, then `README.
 A Windows OBS 33 plugin (StudioEncoder, folder and DLL `obs-studioencoder`) that adds ProRes-compatible video encoders for Standard recording, 4K 10-bit 4:2:2, from OBS's P216 output format:
 
 1. **ProRes (FFmpeg prores_aw, fast)**: FFmpeg's `prores_aw` (the same code as FFmpeg's default `prores`). Recommended.
-2. **ProRes (FFmpeg prores_ks)**: FFmpeg's `prores_ks`. Heavy CPU use.
+2. ~~ProRes (FFmpeg prores_ks)~~: removed in 0.14.0 (see "Settings window regroup and prores_ks removal" below).
 3. **ProRes-compatible (Rust / FilmCraft)**: Rust encoder from the FilmCraft project (MIT OR Apache-2.0), pinned to commit `68919ed87aa6a097a4d21414ec7c438883f5fe22`. Heavy CPU use.
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.13.0**.
+Current version: **0.14.0**.
 
 ## Layout
 
-- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has the FFmpeg encoders: prores_ks/prores_aw, NVENC H.264 4:2:2 and AMD HEVC 4:2:0 (see "AMD HEVC intra encoder" below). Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
+- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has the FFmpeg encoders: prores_aw (original), NVENC H.264 4:2:2, NVENC HEVC 4:2:0 and AMD HEVC 4:2:0 (see "AMD HEVC intra encoder" below). Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
 - `tools/`: `prores-aw-test.c` (AW+ test program) and `p210-probe.cpp` (checks whether a capture card's P210 output carries real 10-bit data; build line at the top of the file).
 - `rust/`: Rust C-ABI staticlib (`src/lib.rs`) wrapping the FilmCraft crate. Built by CMake through cargo.
 - `harness/`: Rust benchmark CLI used in phase 1 (`prores-bench`).
@@ -215,6 +215,13 @@ Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon 
 - **`hvc1` tag**: the muxer's default for HEVC in MOV is `hev1`, which Apple's players and some editors do not read. New backend field `container_tag` (FOURCC macro now in encoder-common.h) is published as `codec_type`, which the OBS muxer passes through as the sample-entry tag. Set only for this encoder. The AMD encoder (0.12.0) still writes `hev1`: not changed because it cannot be tested on this laptop; the same one-line `.container_tag` fix would apply.
 - Not tested: Resolve and Premiere playback, GTX 10/16/RTX 20/30 cards (only the RTX 4070 Laptop), RTX 50 for this encoder, 4K60, long recordings. The settings window was checked: on the laptop the new encoder is ticked and available, the RTX 50 H.264 and the AMD encoder are grayed out.
 - The NVENC H.264 4:2:2 re-test noted for 0.12.0 is still open (needs an RTX 50 card). This encoder exercises the same P010 copy loop on NVENC and it is clean, which makes a regression in the shared plane copy less likely but does not cover P216.
+
+## Settings window regroup and prores_ks removal (0.14.0, 2026-11-07)
+
+- **Window**: three sections. "Recommended (10-bit 4:2:2)" (AW+, NVENC H.264 4:2:2), "10-bit 4:2:0" (NVENC HEVC, AMD HEVC) as a collapsible group that starts collapsed (a `QToolButton` arrow plus a hidden content widget; no moc needed, the toggle is a lambda), and "Experimental" (FFmpeg's original prores_aw, FilmCraft, OxideAV; off by default). New flag `yuv420` on `pr_encoder_entry` (settings.h) says which group an encoder belongs to; defaults are unchanged (everything but Experimental is on when the hardware check passes). Verified in the test OBS in both the collapsed and the expanded state.
+- **prores_ks removed completely** at Mike's request: it will not play in real time even on a Ryzen 9 9950X3D. Gone: the backend, its encoder info and table entry (`obs_prores_ffmpeg`), the `qscale` setting (`pr_params.qscale`, `S_QSCALE`, the locale strings) and the `ks_*` property functions. An OBS profile that still uses `obs_prores_ffmpeg` will find the encoder missing and has to pick another one. `scripts/test-record.ps1` now defaults to AW+ (`obs_prores_ffmpeg_aw`). The earlier prores_ks measurements in this file are history only. The code is in git (commit before 0.14.0) if it is ever wanted again.
+- Re-tested in the test OBS after the removal: AW+ Proxy, original prores_aw Proxy (both `apco`, clean decode) and NVENC HEVC 4:2:0 (`hvc1`, Main 10, clean decode).
+- Build note: after bumping `buildspec.json` the CMake configure step must be re-run (`cmake --preset windows-x64`) or the plugin keeps the old version number (the settings window showed 0.13.0 until then).
 
 ## Open items
 

@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#define S_QSCALE "qscale"
 #define S_VENDOR "vendor_apl0"
 
 struct ff_ctx {
@@ -71,10 +70,6 @@ static void *ff_create(const struct pr_params *p, char *err, size_t err_len)
 	cc->thread_count = p->in_flight > 1 ? 1 : p->threads;
 	cc->thread_type = FF_THREAD_SLICE;
 
-	if (p->qscale > 0) {
-		cc->flags |= AV_CODEC_FLAG_QSCALE;
-		cc->global_quality = p->qscale * FF_QP2LAMBDA;
-	}
 	if (p->vendor_apl0)
 		av_opt_set(cc->priv_data, "vendor", "apl0", 0);
 
@@ -286,19 +281,6 @@ static void nv_set_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, S_NV_PRESET, 0);
 }
 
-static void ks_add_properties(obs_properties_t *props)
-{
-	obs_property_t *q = obs_properties_add_int(props, S_QSCALE, obs_module_text("QScale"), 0, 31, 1);
-	obs_property_set_long_description(q, obs_module_text("QScale.Description"));
-	obs_properties_add_bool(props, S_VENDOR, obs_module_text("Vendor.Apl0"));
-}
-
-static void ks_set_defaults(obs_data_t *settings)
-{
-	obs_data_set_default_int(settings, S_QSCALE, 0);
-	obs_data_set_default_bool(settings, S_VENDOR, true);
-}
-
 /* prores_aw has no quality-scale control. */
 static void aw_add_properties(obs_properties_t *props)
 {
@@ -309,20 +291,6 @@ static void aw_set_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_bool(settings, S_VENDOR, true);
 }
-
-static const struct pr_backend ffmpeg_ks_backend = {
-	.name_key = "Encoder.FFmpeg",
-	.log_name = "ffmpeg-ks",
-	.codec_name = "prores_ks",
-	.default_in_flight = 0, /* automatic */
-	.prores = true,
-	.create = ff_create,
-	.get_planes = ff_get_planes,
-	.encode = ff_encode,
-	.destroy = ff_destroy,
-	.add_properties = ks_add_properties,
-	.set_defaults = ks_set_defaults,
-};
 
 static const struct pr_backend ffmpeg_aw_backend = {
 	.name_key = "Encoder.FFmpegAw",
@@ -338,30 +306,10 @@ static const struct pr_backend ffmpeg_aw_backend = {
 	.set_defaults = aw_set_defaults,
 };
 
-static void *ffmpeg_ks_create(obs_data_t *settings, obs_encoder_t *encoder)
-{
-	return pr_encoder_create(&ffmpeg_ks_backend, settings, encoder);
-}
-
 static void *ffmpeg_aw_create(obs_data_t *settings, obs_encoder_t *encoder)
 {
 	return pr_encoder_create(&ffmpeg_aw_backend, settings, encoder);
 }
-
-struct obs_encoder_info pr_ffmpeg_encoder_info = {
-	.id = "obs_prores_ffmpeg",
-	.type = OBS_ENCODER_VIDEO,
-	.codec = "prores",
-	.get_name = pr_encoder_get_name,
-	.create = ffmpeg_ks_create,
-	.destroy = pr_encoder_destroy,
-	.encode = pr_encoder_encode,
-	.update = pr_encoder_update,
-	.get_extra_data = pr_encoder_get_extra_data,
-	.get_defaults2 = pr_encoder_get_defaults,
-	.get_properties2 = pr_encoder_get_properties,
-	.type_data = (void *)&ffmpeg_ks_backend,
-};
 
 struct obs_encoder_info pr_ffmpeg_aw_encoder_info = {
 	.id = "obs_prores_ffmpeg_aw_original",
