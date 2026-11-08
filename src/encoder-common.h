@@ -37,6 +37,7 @@ struct pr_params {
 	int bitrate_mbps; /* NVENC only */
 	bool nvenc_fast;  /* NVENC only: preset p1 instead of p5 */
 	int amd_quality;  /* AMD only: 0 Small, 1 Standard, 2 High, 3 Maximum */
+	int qsv_quality;  /* Intel QuickSync only: 0 Small, 1 Standard, 2 High, 3 Maximum */
 	uint32_t width;
 	uint32_t height;
 	uint32_t fps_num;

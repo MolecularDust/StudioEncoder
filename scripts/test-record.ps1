@@ -12,6 +12,9 @@ param(
   [int]$Overload = 0,                        # 0 = warn, 1 = stop recording
   [int]$Sizing = 0,                          # 0 = grow when late, 1 = size from measured frame cost
   [string]$Clip = "",                         # optional video file to loop as the source instead of a flat colour
+  [string]$CaptureDevice = "",                # optional live DirectShow source: OBS video_device_id (copy it from a scene file)
+  [int]$CaptureFormat = 0,                    # dshow video_format for -CaptureDevice: 0 any, 204 P010, 301 YUY2, 201 NV12
+  [string]$Fps = '29.97',                     # canvas frame rate (FPSCommon), e.g. 30 for a 30p capture
   [string]$ColorFormat = 'P216',            # OBS output colour format
   [string]$EncoderJson = '',                # raw recordEncoder.json content; replaces the plugin settings
   [switch]$NoRecord,                        # measure the idle load of the scene only
@@ -40,7 +43,7 @@ BaseCY=2160
 OutputCX=3840
 OutputCY=2160
 FPSType=0
-FPSCommon=29.97
+FPSCommon=$Fps
 ColorFormat=$ColorFormat
 ColorSpace=709
 ColorRange=Partial
@@ -58,7 +61,12 @@ RecTracks=1
 $inflightJson = if ($InFlight -gt 0) { ",`"in_flight`":$InFlight" } else { "" }
 $encJson = if ($EncoderJson) { $EncoderJson } else { "{`"profile`":$Profile,`"threads`":0,`"log_level`":$LogLevel,`"vendor_apl0`":true,`"overload_action`":$Overload,`"inflight_sizing`":$Sizing$inflightJson}" }
 $encJson | Set-Content (Join-Path $prof 'recordEncoder.json') -Encoding utf8
-if ($Clip) {
+if ($CaptureDevice) {
+  # live capture card at 4K, frame interval from the canvas rate (333333 = 30 fps, 333667 = 29.97)
+  $interval = if ($Fps -eq '30') { 333333 } elseif ($Fps -eq '29.97') { 333667 } else { [int](1e7 / [double]$Fps) }
+  $dev = ($CaptureDevice -replace '\\', '\\')
+  $source = "{`"id`":`"dshow_input`",`"name`":`"Source`",`"versioned_id`":`"dshow_input`",`"settings`":{`"video_device_id`":`"$dev`",`"res_type`":1,`"resolution`":`"3840x2160`",`"frame_interval`":$interval,`"video_format`":$CaptureFormat,`"deactivate_when_not_showing`":false}}"
+} elseif ($Clip) {
   # loop a real recording; hardware decoding off so the CPU load resembles a capture source plus decode
   $clipJson = ($Clip -replace '\\', '/')
   $source = "{`"id`":`"ffmpeg_source`",`"name`":`"Source`",`"versioned_id`":`"ffmpeg_source`",`"settings`":{`"local_file`":`"$clipJson`",`"is_local_file`":true,`"looping`":true,`"hw_decode`":false,`"restart_on_activate`":true}}"

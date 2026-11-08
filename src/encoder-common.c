@@ -200,6 +200,7 @@ static void read_settings(struct pr_params *p, obs_data_t *settings, const struc
 	p->bitrate_mbps = (int)obs_data_get_int(settings, "bitrate_mbps");
 	p->nvenc_fast = obs_data_get_int(settings, "nvenc_preset") == 1;
 	p->amd_quality = (int)obs_data_get_int(settings, "amd_quality");
+	p->qsv_quality = (int)obs_data_get_int(settings, "qsv_quality");
 }
 
 /* The muxer reads the container FourCC from the encoder's own settings. Only ProRes needs one; 0 lets the muxer

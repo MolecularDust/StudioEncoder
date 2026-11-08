@@ -51,6 +51,37 @@ target_sources(
   PRIVATE src/plugin-main.c src/encoder-common.c src/encoder-common.h src/encoder-rust.c src/encoder-oxideav.c src/encoder-ffmpeg.c src/prores-rs.h src/settings.c src/settings.h src/settings-dialog.cpp src/prores-aw.c src/prores-aw.h src/encoder-awplus.c
 )
 
+# HEVC 10-bit 4:2:2 on Intel QuickSync, through Intel's oneVPL (OBS's bundled FFmpeg has no QuickSync encoders).
+# Optional: without the oneVPL development files the plugin is built without this encoder.
+find_package(VPL 2.6 CONFIG QUIET)
+if(TARGET VPL::dispatcher)
+  set(SE_VPL_TARGET VPL::dispatcher)
+elseif(TARGET VPL::VPL)
+  set(SE_VPL_TARGET VPL::VPL)
+else()
+  # obs-deps on Windows ships the oneVPL headers and the static dispatcher (vpl.lib) without a CMake package
+  find_path(SE_VPL_INCLUDE_DIR vpl/mfx.h)
+  find_library(SE_VPL_LIBRARY NAMES vpl libvpl)
+  if(SE_VPL_INCLUDE_DIR AND SE_VPL_LIBRARY)
+    add_library(se_vpl INTERFACE)
+    target_include_directories(se_vpl INTERFACE "${SE_VPL_INCLUDE_DIR}")
+    target_link_libraries(se_vpl INTERFACE "${SE_VPL_LIBRARY}")
+    if(WIN32)
+      # the static dispatcher reads the registry and enumerates adapters through DXGI
+      target_link_libraries(se_vpl INTERFACE advapi32 ole32 dxgi)
+    endif()
+    set(SE_VPL_TARGET se_vpl)
+  endif()
+endif()
+if(SE_VPL_TARGET)
+  message(STATUS "StudioEncoder: oneVPL found (${SE_VPL_TARGET}), building the QuickSync HEVC 4:2:2 encoder")
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/encoder-qsv.c)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${SE_VPL_TARGET})
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SE_HAVE_VPL)
+else()
+  message(STATUS "StudioEncoder: oneVPL not found, building without the QuickSync HEVC 4:2:2 encoder")
+endif()
+
 # 10-bit 4:2:2 (P210) capture source: DirectShow, Windows only
 if(WIN32)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/capture-p210.cpp)

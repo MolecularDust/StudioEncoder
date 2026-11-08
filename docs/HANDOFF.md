@@ -12,11 +12,11 @@ A Windows OBS 33 plugin (StudioEncoder, folder and DLL `obs-studioencoder`) that
 
 Unofficial; not Apple ProRes. Keep that wording in any user-facing text.
 
-Current version: **0.15.0**.
+Current version: **0.16.0**.
 
 ## Layout
 
-- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has the FFmpeg encoders: prores_aw (original), NVENC H.264 4:2:2, NVENC HEVC 4:2:0 and AMD HEVC 4:2:0 (see "AMD HEVC intra encoder" below). Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
+- `src/`: C glue. `encoder-common.c/.h` has the shared pipeline, P216 conversion and overload check. `encoder-ffmpeg.c` has the FFmpeg encoders: prores_aw (original), NVENC H.264 4:2:2, NVENC HEVC 4:2:0 and AMD HEVC 4:2:0 (see "AMD HEVC intra encoder" below). `encoder-qsv.c` has the Intel QuickSync HEVC 4:2:2 encoder (oneVPL, see "Intel QuickSync HEVC 4:2:2 intra encoder" below). Also `encoder-rust.c`, `prores-rs.h` and `plugin-main.c`. `capture-p210.cpp` is the 10-bit 4:2:2 capture source (Windows only).
 - `tools/`: `prores-aw-test.c` (AW+ test program) and `p210-probe.cpp` (checks whether a capture card's P210 output carries real 10-bit data; build line at the top of the file).
 - `rust/`: Rust C-ABI staticlib (`src/lib.rs`) wrapping the FilmCraft crate. Built by CMake through cargo.
 - `harness/`: Rust benchmark CLI used in phase 1 (`prores-bench`).
@@ -250,9 +250,27 @@ Hardware changed on 2026-11-05: ASRock B650 Steel Legend WiFi and an AMD Radeon 
 - **The original FFmpeg prores_aw encoder is removed** at Mike's request (AW+ replaces it). Gone: `ff_create`, `ff_get_planes`, the `ffmpeg_aw_backend`, its encoder info and table entry (id `obs_prores_ffmpeg_aw_original`), and the locale strings. FilmCraft and OxideAV are the only Experimental encoders left. The shared helpers `ff_destroy` and `ff_encode` stay (the NVENC encoders use them). The byte-for-byte checks against FFmpeg's prores_aw still work: `tools/prores-aw-test.c` and `scripts/linux-test.sh` compare against the FFmpeg command line, not against the plugin's encoder.
 - Re-tested in the test OBS: AW+ Proxy and HQ, NVENC HEVC 4:2:0, FilmCraft and OxideAV record and decode cleanly; the window was checked closed and with both groups open.
 
+## Intel QuickSync HEVC 4:2:2 intra encoder (0.16.0, 2026-11-09)
+
+Machine: a third laptop, Intel Core Ultra X7 358H with Arc B390 graphics (no NVIDIA, no AMD), Windows 11, Intel graphics driver as shipped. Capture: the AverMedia Live Gamer Ultra 2.1 in P010 4K 30 (DirectShow), with the camera on it.
+
+**Why:** OBS's own QuickSync HEVC refuses Color Format P216 ("Cannot perform 16-bit encode on this encoder"), so stock OBS cannot record 10-bit 4:2:2 on Intel. The hardware can: FFmpeg's `hevc_qsv` (Gyan build 9.0.2) encodes 4K 10-bit 4:2:2 intra (`-profile:v rext`, input `y210`) at about 65 fps on a test pattern, and a 30 s live take from the card (P010 piped in by a small DirectShow tool, converted to Y210) gave 901/901 frames, 0 dropped, 0 repeats, 1.0x real time, 120 Mbit/s at ICQ 18. For comparison, OBS's own QuickSync HEVC with Color Format P010 held 30 fps (868 frames in 28.9 s, 0 repeats).
+
+**`SE: HEVC 10-bit 4:2:2 Intra (Intel QuickSync)`** (`obs_prores_qsv_hevc422_intra`, `src/encoder-qsv.c`):
+- **oneVPL directly, not FFmpeg**: OBS 33's bundled FFmpeg (obs-deps 2026-10-23, `avcodec-62.dll`) has no QuickSync encoders at all (`hevc_qsv` and `h264_qsv` missing; `hevc_amf` and `hevc_nvenc` present). obs-deps does ship the oneVPL headers (`include/vpl`) and the static dispatcher `lib/vpl.lib`, without a CMake package; `CMakeLists.txt` finds them itself and builds the encoder only when found (`SE_HAVE_VPL`), so builds without oneVPL still work.
+- P216 in (Color Format P216), repacked on the worker thread to Y210 (Y0 Cb Y1 Cr, 10 bits at the top of each 16-bit word, rounded with (v + 32) & 0xFFC0, SSE2), system-memory surfaces, HEVC Main 4:2:2 10 (Rext), GOP 1 with every frame forced IDR, ICQ rate control, `hvc1` tag, VPS/SPS/PPS read with `GetVideoParam` for the MOV header, Rec. 709 colour tags through `mfxExtVideoSignalInfo`.
+- **Pipelining matters**: sending a frame and waiting for it before the next (AsyncDepth 1) took 36.6 ms per 4K frame and OBS repeated 69% of frames. Now 3 frames are queued in the hardware and each packet is collected 2 frames later (timestamps come back through `mfxBitstream.TimeStamp`): 2.5-2.9 ms per frame on the worker, about 6-7 ms on OBS's thread. One encoder session (`max_in_flight 1`). The last frames before Stop may be lost (OBS does not flush video encoders), as with the AMD encoder.
+- Quality presets (ICQ 24 / 21 / 18 / 12 = Small / Standard / High / Maximum, default High). Through FFmpeg on the live clip: 32 / 89 / 120 / 160 Mbit/s. Through the plugin on a different live scene, High gave 170 Mbit/s, so the preset labels are rough; re-measure on one clip before relying on them. CQP through FFmpeg's `-q:v` / `+qscale` did not change the bitrate at all (always about 174 Mbit/s), ICQ did.
+- Start-up probe opens the encoder at 640x360 and closes it (about 450 ms on this laptop, slower than the other probes).
+- **Tested** in a stock portable OBS 33.0.1 (`_test`), plugin 0.16.0: synthetic 4K 29.97, 398 frames, 0 repeats, 2.5 ms per frame. Live AverMedia P010 4K 30 into P216, 60 s: 1901 frames, OBS CPU 4.2% of 16 threads, plugin counter 1 repeat (first second), file 1896 frames, HEVC Rext `yuv422p10le` `hvc1`, Rec. 709 limited, every frame a keyframe, 170 Mbit/s, gapless timestamps, clean full decode, picture checked. Frame hashes show 29 identical frames, all in the first second (frames 1-29: the card still starting while OBS was already recording), none in the remaining 1866. AW+ Proxy re-tested after the change (apco, clean decode, no repeats).
+- **In Mike's own portable OBS** (`C:\SOFTWARE\OBS-Studio`, copied from the desktop): new profile "4K 10 bit 422 QuickSync" (3840x2160 30, P216, Rec. 709 limited, Advanced output, Standard MOV, this encoder at High). 20 s from the AverMedia: 585 frames, 0 identical frames by hash, 0 repeats by the plugin, 44 Mbit/s, clean decode, natural colours. Two things that went wrong first, both outside the plugin: (1) a DirectShow source set to **P010 with Color Space "Default" gives strongly oversaturated, red skin**; set the source's Color Space to Rec. 709 and Range to Limited. (2) With a second USB capture adapter open at the same time, the AverMedia at 4K P010 (about 750 MB/s) got no bandwidth: Windows showed "not enough USB controller resources" and the recording was black (all frames identical). One active USB capture source at a time, or put the adapters on different controllers.
+- `scripts/test-record.ps1` can now use a live DirectShow card: `-CaptureDevice <video_device_id from a scene file> -CaptureFormat 204` (204 = P010 in libdshowcapture's enum) `-Fps 30`.
+- **Not tested**: the StudioEncoder settings window with the new entry, Resolve and Premiere playback of these files, longer recordings and start/stop cycles, 60 fps, other Intel GPUs (Arc A/B discrete, older Core Ultra, 11th-14th gen iGPUs; 4:2:2 10-bit HEVC encode support varies by generation), Linux (the code uses the oneVPL API and should build there with libvpl, not tried).
+
 ## Open items
 
 0. **AMD encoder**: Resolve/Premiere check, longer soak, NVENC re-test (see above).
+0a. **Intel QuickSync 4:2:2 encoder** (0.16.0): settings window check, Resolve/Premiere playback, a 10-minute soak and start/stop cycles, re-measure the quality presets on one clip, other Intel GPUs.
 1. **NVENC files in Resolve**: import and play an NV200 recording from the desktop test (not checked yet).
 2. Premiere check.
 3. Hybrid MOV with these encoders: untested.
