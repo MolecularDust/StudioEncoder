@@ -1,5 +1,8 @@
 #pragma once
 
+/* Big-endian FourCC as an integer, the form the OBS muxer expects in the "codec_type" encoder setting. */
+#define FOURCC(a, b, c, d) (((int64_t)(a) << 24) | ((int64_t)(b) << 16) | ((int64_t)(c) << 8) | (int64_t)(d))
+
 #include <obs-module.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -28,13 +31,13 @@ struct pr_params {
 	enum pr_profile profile;
 	int threads;   /* 0 = automatic; slice threads when only one frame is in flight */
 	int in_flight; /* frames encoded in parallel */
-	int qscale;    /* 0 = profile default (prores_ks only) */
 	bool vendor_apl0;
 	int log_level;
 	const char *codec_name; /* FFmpeg encoder name, or NULL for the Rust backend */
 	int bitrate_mbps; /* NVENC only */
 	bool nvenc_fast;  /* NVENC only: preset p1 instead of p5 */
 	int amd_quality;  /* AMD only: 0 Small, 1 Standard, 2 High, 3 Maximum */
+	int qsv_quality;  /* Intel QuickSync only: 0 Small, 1 Standard, 2 High, 3 Maximum */
 	uint32_t width;
 	uint32_t height;
 	uint32_t fps_num;
@@ -73,6 +76,7 @@ struct pr_backend {
 	int max_in_flight; /* 0 = no limit; NVENC sessions are limited on consumer GPUs */
 	bool prores;       /* ProRes profile list and container FourCC */
 	bool input_p010;   /* takes P010 (10-bit 4:2:0) from OBS instead of P216 (10-bit 4:2:2) */
+	int64_t container_tag; /* FourCC for the MOV sample entry (e.g. hvc1), or 0 for the muxer's default */
 	/* Optional: describes the quality setting for the log line written when the encoder starts. */
 	void (*describe)(const struct pr_params *params, char *buf, size_t buf_len);
 

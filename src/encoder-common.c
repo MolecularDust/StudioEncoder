@@ -18,7 +18,6 @@
 
 /* ProRes FourCCs, stored the way obs-ffmpeg-mux expects "codec_type": the four characters read as a
  * big-endian integer (the muxer byte-swaps it on little-endian hosts). */
-#define FOURCC(a, b, c, d) (((int64_t)(a) << 24) | ((int64_t)(b) << 16) | ((int64_t)(c) << 8) | (int64_t)(d))
 
 static const int64_t profile_fourcc[] = {
 	FOURCC('a', 'p', 'c', 'o'), /* Proxy */
@@ -195,20 +194,21 @@ static void read_settings(struct pr_params *p, obs_data_t *settings, const struc
 		in_flight = PR_MAX_IN_FLIGHT;
 	p->in_flight = in_flight;
 
-	p->qscale = (int)obs_data_get_int(settings, "qscale");
 	p->vendor_apl0 = obs_data_get_bool(settings, "vendor_apl0");
 	p->log_level = (int)obs_data_get_int(settings, S_LOG_LEVEL);
 	p->codec_name = backend->codec_name;
 	p->bitrate_mbps = (int)obs_data_get_int(settings, "bitrate_mbps");
 	p->nvenc_fast = obs_data_get_int(settings, "nvenc_preset") == 1;
 	p->amd_quality = (int)obs_data_get_int(settings, "amd_quality");
+	p->qsv_quality = (int)obs_data_get_int(settings, "qsv_quality");
 }
 
 /* The muxer reads the container FourCC from the encoder's own settings. Only ProRes needs one; 0 lets the muxer
- * choose its default tag (avc1 for H.264). */
+ * choose its default tag (avc1 for H.264). HEVC asks for hvc1: the muxer's default hev1 is not read by Apple's
+ * players and some editors. */
 static void publish_codec_type(obs_data_t *settings, const struct pr_backend *backend, enum pr_profile profile)
 {
-	obs_data_set_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[profile] : 0);
+	obs_data_set_int(settings, S_CODEC_TYPE, backend->prores ? profile_fourcc[profile] : backend->container_tag);
 }
 
 static void *pr_worker(void *param)
@@ -456,7 +456,7 @@ bool pr_encoder_update(void *data, obs_data_t *settings)
 
 /* Automatic mode: when the oldest frame was still encoding as its turn came, allow one more frame in flight.
  * Wait for the previous change to take effect (a full pipeline of frames) before growing again. Growth only
- * happens while frames are late, up to one worker per logical CPU: stopping earlier left prores_ks short of
+ * happens while frames are late, up to one worker per logical CPU: stopping earlier left a heavy encoder short of
  * real time on a 32-thread CPU that could have kept up. */
 static void size_from_cost(struct pr_encoder *enc);
 

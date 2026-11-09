@@ -19,6 +19,8 @@ struct pr_encoder_entry {
 	bool (*probe)(char *reason, size_t reason_len);
 	/* Locale key for the sentence shown when the probe failed; NULL = "Settings.Unavailable". */
 	const char *unavailable_key;
+	/* 10-bit 4:2:0 encoders are grouped under their own collapsible heading in the settings window. */
+	bool yuv420;
 };
 
 const struct pr_encoder_entry *pr_encoder_entries(size_t *count);
