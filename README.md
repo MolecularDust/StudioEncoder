@@ -23,6 +23,8 @@ Profiles: Proxy (`apco`), LT (`apcs`), 422 (`apcn`), HQ (`apch`).
 
 OBS's encoder list stays short by default. **Tools > StudioEncoder** opens a window listing every encoder in this plugin in three sections: **Recommended (10-bit 4:2:2)** (AW+ and the RTX 50 H.264 encoder), **10-bit 4:2:0** (the NVIDIA and AMD HEVC encoders) and **Experimental** (FilmCraft and OxideAV, off by default). The last two are collapsible groups that start closed; click the small arrow to open one. Tick the ones you want and press OK; the change takes effect after you restart OBS.
 
+<p align="center"><img src="docs/images/settings-window.png" alt="The StudioEncoder settings window (Tools > StudioEncoder) in OBS: a list of encoders with checkboxes and collapsible 10-bit 4:2:0 and Experimental groups" width="420"></p>
+
 An encoder that is switched off is only hidden from the dropdown. A profile that already uses it keeps working. All encoders from this plugin start with "SE:" in OBS's encoder list so they are easy to spot.
 
 
