@@ -8,8 +8,6 @@ An OBS Studio plugin for Windows that adds all-intra, 10-bit encoders to OBS Stu
 
 As of OBS 33.0, the Custom Output (FFmpeg) pathway has a bug that now and then causes a "non monotonically increasing dts" error and can stop a new recording from working. StudioEncoder avoids this pathway: its encoders run in **Standard** recording mode, so they run smoothly.
 
-*Earlier versions used the folder names `obs-prores` and `obs-studioencoders`. The plugin folder is now `obs-studioencoder`; delete any older folder when you update.*
-
 > **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` (and the AW+ encoder built from it), the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
 
 ## Encoders
