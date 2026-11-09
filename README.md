@@ -111,9 +111,20 @@ Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 mar
 
 ## Settings
 
-1. Settings → Advanced: **Color Format P216** (**P010** for the two HEVC encoders), Color Space Rec. 709, Color Range Limited.
-2. Settings → Output: Output Mode **Advanced**, Recording tab, Type **Standard**, Recording Format **MOV**.
-3. Video Encoder: one of the encoders above. In its settings:
+1. Settings → Video: set the canvas (Base) and Output resolution to your recording size and the frame rate to match your source. The screenshot shows 3840x2160 at 29.97.
+
+   <img src="docs/images/obs-video.png" alt="OBS Settings, Video tab: Base and Output resolution 3840x2160, 29.97 fps" width="560">
+
+2. Settings → Advanced: **Color Format P216** (**P010** for the two HEVC encoders), Color Space Rec. 709, Color Range Limited.
+
+   <img src="docs/images/obs-advanced-colour-format.png" alt="OBS Settings, Advanced tab: Colour Format P216 (16-bit, 4:2:2, 2 planes), Rec. 709, Limited, highlighted" width="560">
+
+3. Settings → Output: Output Mode **Advanced**, Recording tab, Type **Standard**, Recording Format **MOV**.
+4. Video Encoder: one of the encoders above (it starts with "SE:"). The line under Encoder Settings, "Required video settings", repeats the Color Format, Color Space and Color Range this encoder needs.
+
+   <img src="docs/images/obs-output-encoder.png" alt="OBS Settings, Output tab, Recording: Standard type, QuickTime (.mov), Video Encoder SE: ProRes (AW+, fast) highlighted" width="560">
+
+   In its settings:
    - **Profile** (ProRes encoders): Proxy, LT, 422 or HQ. **Bitrate** and **Speed** (NVENC encoder): see above.
    - **Frames in flight**: 0 (automatic, recommended). Frames are encoded in parallel, one per CPU core, as needed.
    - **Automatic sizing** (only with Frames in flight 0): *Grow when frames are late* (default) or *Size from measured frame cost* (experimental). The second starts with 4 workers, times a frame, then sets the number of workers needed in one step. That uses less memory for light encoders and ramps up faster for heavy ones. CPU load is the same either way.
