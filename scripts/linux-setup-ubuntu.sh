@@ -15,6 +15,9 @@ sudo apt-get install -y \
 	obs-studio qt6-base-dev libsimde-dev \
 	libavcodec-dev libavutil-dev libavformat-dev libswscale-dev ffmpeg
 
+echo "== Intel QuickSync (oneVPL dispatcher + headers, GPU runtime, VA-API driver, libva headers, vainfo)"
+sudo apt-get install -y libvpl-dev libmfx-gen1.2 intel-media-va-driver-non-free libva-dev vainfo
+
 if ! command -v cargo >/dev/null 2>&1; then
 	echo "== Rust (rustup, current user only)"
 	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal

@@ -284,3 +284,15 @@ Machine: a third laptop, Intel Core Ultra X7 358H with Arc B390 graphics (no NVI
 - Don't run the test scripts against his own OBS installs; use the `_test` copy.
 - Judge recordings by OBS's repeated-frame counter (or by comparing frame hashes), not by frame counts or timestamps. Gapless timestamps don't prove that no frames were repeated.
 - Keep outward-facing actions (publishing, creating repos, posting) behind explicit confirmation.
+
+## Linux results: Intel QuickSync 4:2:2 (2026-11-09)
+
+Environment: Ubuntu 26.04 (resolute), kernel 7.0.0-27-generic, Core Ultra X7 358H / Arc B390 (Panther Lake) on the `xe` driver, OBS 33.0.0 from the official PPA, Intel iHD VA driver 26.1.2 (`intel-media-va-driver-non-free`), `libvpl-dev` 2.16.0, `libmfx-gen1.2` 26.1.2.
+
+- **Packages**: the encoder was built out until `libvpl-dev`, `libmfx-gen1.2`, `intel-media-va-driver-non-free`, `libva-dev` and `vainfo` were installed (now in `scripts/linux-setup-ubuntu.sh`; the Arch script is not updated). Check the configure line `oneVPL found (VPL::dispatcher)`.
+- **Hardware**: `vainfo` lists `VAProfileHEVCMain422_10` with `VAEntrypointEncSlice`. Ubuntu is enough; CachyOS was not needed.
+- **No VA display handoff needed**: oneVPL's `MFXCreateSession` works without `MFXVideoCORE_SetHandle`. The hardware check passes (about 200-310 ms).
+- **Recording** (synthetic solid-colour 4K source, profile `SE-QSV-Test`, P216, Rec. 709, Limited, 4K 30, MOV, ICQ 18): 925 frames in 30.8 s, no repeated frames, encode 4.5 ms per frame on the worker, 8.9 ms on OBS's thread. `ffprobe`: hevc Rext, yuv422p10le, `hvc1`, bt709 tv, 925 of 925 packets keyframes; full decode clean.
+- **Not tested**: a live capture card (AverMedia YUYV/P010), picture quality on real footage (the source was flat colour), and why the plugin reports "frames in flight: 1" where the Windows design queues 3.
+- **Start-up**: `pr_nvenc_*_probe` now skip the probe when no NVIDIA device is on the PCI bus (Linux only). Without that, installed NVIDIA driver packages and no card made `hevc_nvenc` wait 3.5 s inside CUDA. OBS's own `obs-nvenc` module still spends about 2.5 s on the same condition; that is OBS, not this plugin.
+- **Note**: `obs_prores_amd_hevc_intra` also passes its check on this Intel GPU, because its probe only needs generic VA-API HEVC 10-bit encode.

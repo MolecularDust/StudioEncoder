@@ -13,9 +13,40 @@
 
 #ifndef _WIN32
 #include <libavutil/hwcontext.h>
+#include <dirent.h>
 #include <stdlib.h>
 #include <unistd.h>
 #endif
+
+/* False when this Linux machine has no NVIDIA card on the PCI bus. With the NVIDIA driver packages installed but no
+ * card, CUDA takes seconds to give up, which delayed OBS's start-up. Always true elsewhere. */
+static bool nvidia_gpu_present(void)
+{
+#ifdef __linux__
+	DIR *dir = opendir("/sys/bus/pci/devices");
+	if (!dir)
+		return true; /* cannot tell: let the real probe decide */
+	bool found = false;
+	struct dirent *e;
+	while (!found && (e = readdir(dir)) != NULL) {
+		if (e->d_name[0] == '.')
+			continue;
+		char path[320];
+		snprintf(path, sizeof(path), "/sys/bus/pci/devices/%s/vendor", e->d_name);
+		FILE *f = fopen(path, "r");
+		if (!f)
+			continue;
+		unsigned vendor = 0;
+		if (fscanf(f, "%x", &vendor) == 1 && vendor == 0x10de)
+			found = true;
+		fclose(f);
+	}
+	closedir(dir);
+	return found;
+#else
+	return true;
+#endif
+}
 
 struct ff_ctx {
 	AVCodecContext *cc;
@@ -244,6 +275,10 @@ struct obs_encoder_info pr_nvenc_h264_encoder_info = {
  * frame size and closing it again. Used once at start-up to decide whether the encoder is offered. */
 bool pr_nvenc_h264_422_probe(char *reason, size_t reason_len)
 {
+	if (!nvidia_gpu_present()) {
+		snprintf(reason, reason_len, "no NVIDIA graphics card found");
+		return false;
+	}
 	const AVCodec *codec = avcodec_find_encoder_by_name("h264_nvenc");
 	if (!codec) {
 		snprintf(reason, reason_len, "the FFmpeg loaded by OBS has no h264_nvenc encoder");
@@ -848,6 +883,10 @@ struct obs_encoder_info pr_nvenc_hevc_encoder_info = {
  * it again. Used once at start-up to decide whether the encoder is offered. */
 bool pr_nvenc_hevc_probe(char *reason, size_t reason_len)
 {
+	if (!nvidia_gpu_present()) {
+		snprintf(reason, reason_len, "no NVIDIA graphics card found");
+		return false;
+	}
 	AVCodecContext *cc = nvh_open(640, 360, (AVRational){30, 1}, 20, true, NULL, reason, reason_len);
 	if (!cc)
 		return false;
