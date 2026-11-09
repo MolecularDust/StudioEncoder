@@ -1,4 +1,4 @@
-# StudioEncoder: editing-friendly encoders for OBS Studio 33
+# StudioEncoder: editing-friendly encoders for OBS Studio
 
 An OBS Studio plugin for Windows that adds all-intra, 10-bit encoders to OBS Studio 33 and up, for 4K recording to MOV that edits smoothly.
 
