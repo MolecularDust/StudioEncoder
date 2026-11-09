@@ -10,6 +10,18 @@ As of OBS 33.0, the Custom Output (FFmpeg) pathway has a bug that now and then c
 
 > **Not Apple ProRes.** This plugin is unofficial and is not affiliated with or endorsed by Apple. Apple ProRes is a licensed, certified codec. The encoders here are independent implementations of the publicly documented format (SMPTE RDD 36): FFmpeg's `prores_aw` (and the AW+ encoder built from it), the FilmCraft Rust encoder and the OxideAV Rust encoder. Their output plays in common editors, such as DaVinci Resolve, but it is not certified by Apple.
 
+## Hardware
+
+The capture card decides whether you really record 10-bit 4:2:2, because it has to deliver 10-bit 4:2:2 to the PC.
+
+**Cards.** The least expensive way to capture 4K 10-bit 4:2:2 on a PC is a Blackmagic Design Intensity or DeckLink card, or a Magewell Pro Capture card. AJA and Datapath cards also do it, but at a much higher price.
+
+**P210 in OBS.** OBS cannot capture the P210 pixel format (10-bit 4:2:2) in its own Video Capture Device source, which stops at 10-bit 4:2:0. Blackmagic cards (v210) already work in OBS through its DeckLink source. StudioEncoder adds support for Magewell cards and any other card that outputs P210, which OBS never had. Use the **SE: 10-bit 4:2:2 capture (P210)** source.
+
+**PCIe cards.** The card needs a slot wired for **x4 lanes** to run at full capacity. Do not let it share lanes with an M.2 socket or SATA ports, which can cut the slot to x2 or x1. Check your motherboard manual.
+
+**USB cards.** 4K30 10-bit 4:2:2 needs about 5.3 Gbit/s as packed v210, or 8.0 Gbit/s as P210. A 5 Gbit/s USB 3.0 link carries only about 3.5 to 4 Gbit/s in practice, so it cannot do this. You need a true 10 Gbit/s USB 3.2 Gen 2 port, a suitable cable and a card that outputs 10-bit 4:2:2, and 4K30 P210 will only just fit. 4K60 does not fit on any USB link. Most USB capture cards offer only 8-bit 4:2:2 or 10-bit 4:2:0, so check a card's output formats before you buy.
+
 ## Encoders
 
 | Encoder in OBS | Implementation | Notes |
