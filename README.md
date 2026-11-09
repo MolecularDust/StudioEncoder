@@ -1,6 +1,12 @@
 # StudioEncoder: editing-friendly encoders for OBS Studio 33
 
-An OBS Studio plugin for Windows. It adds ProRes-compatible video encoders and all-intra GPU encoders (H.264 and HEVC on NVIDIA, HEVC on AMD) to **Standard** recording mode, for 4K, 10-bit recording to MOV that edits smoothly. Most encoders here keep 4:2:2 colour; the HEVC ones (for older NVIDIA cards and for AMD) are 10-bit 4:2:0.
+An OBS Studio plugin for Windows that adds all-intra, 10-bit encoders to OBS Studio 33, for 4K recording to MOV that edits smoothly.
+
+- **AW+** is a ProRes-compatible CPU encoder with 10-bit 4:2:2 colour. It is an improved version of FFmpeg's ProRes encoder (`prores_aw`) and fixes a rounding bug that made footage blurry in ProRes Proxy mode.
+- **GPU encoders with 10-bit 4:2:2:** H.264 for NVIDIA RTX 50 series cards, and HEVC through Intel QuickSync (tested on an Intel Panther Lake CPU).
+- **GPU encoders with 10-bit 4:2:0:** all-intra HEVC for AMD GPUs and for NVIDIA cards older than the RTX 50 series. OBS already has hardware HEVC encoders for these GPUs, but StudioEncoder makes them easier to use, with simple presets instead of arcane settings. AMD GPUs cannot encode 4:2:2, so these stay 4:2:0.
+
+As of OBS 33.0, the Custom Output (FFmpeg) pathway has a bug that now and then causes a "non monotonically increasing dts" error and can stop a new recording from working. StudioEncoder avoids this pathway: its encoders run in **Standard** recording mode, so they run smoothly.
 
 *Earlier versions used the folder names `obs-prores` and `obs-studioencoders`. The plugin folder is now `obs-studioencoder`; delete any older folder when you update.*
 
