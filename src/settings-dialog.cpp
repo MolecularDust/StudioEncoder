@@ -49,6 +49,14 @@ static void show_settings(void *)
 	dialog.setMinimumWidth(540);
 	auto *layout = new QVBoxLayout(&dialog);
 
+	auto *tagline = new QLabel(T("Settings.Tagline"));
+	QFont tagline_font = tagline->font();
+	tagline_font.setBold(true);
+	tagline_font.setPointSizeF(tagline_font.pointSizeF() * 1.15);
+	tagline->setFont(tagline_font);
+	tagline->setWordWrap(true);
+	layout->addWidget(tagline);
+
 	auto *intro = new QLabel(T("Settings.Intro"));
 	intro->setWordWrap(true);
 	layout->addWidget(intro);
