@@ -107,8 +107,6 @@ Close OBS, then copy the `obs-studioencoder` folder from the release zip:
 - **Installed OBS:** to `C:\ProgramData\obs-studio\plugins\obs-studioencoder\`. `ProgramData` is hidden; type the path into File Explorer.
 - **Portable OBS:** to `<OBS folder>\plugins\obs-studioencoder\`, next to `bin`, `data` and `config`.
 
-If you had an older version, delete its `obs-prores` or `obs-studioencoders` folder from the same place first, or OBS will load two copies.
-
 The folder must contain `obs-studioencoder.dll` and `data\locale\`. In OBS, Tools → Plugin Manager should list "StudioEncoder", and Tools → StudioEncoder opens its settings.
 
 Do not use the old `obs-plugins\64bit` or `data\obs-plugins` folders. OBS 33 marks those locations as legacy.
