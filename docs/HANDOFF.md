@@ -297,3 +297,31 @@ Environment: Ubuntu 26.04 (resolute), kernel 7.0.0-27-generic, Core Ultra X7 358
 - **Not tested**: real 10-bit input (P010 needs the patched V4L2 source and a kernel whose UVC driver lists P010), and why the plugin reports "frames in flight: 1" where the Windows design queues 3.
 - **Start-up**: `pr_nvenc_*_probe` now skip the probe when no NVIDIA device is on the PCI bus (Linux only). Without that, installed NVIDIA driver packages and no card made `hevc_nvenc` wait 3.5 s inside CUDA. OBS's own `obs-nvenc` module still spends about 2.5 s on the same condition; that is OBS, not this plugin.
 - **Note**: `obs_prores_amd_hevc_intra` also passes its check on this Intel GPU, because its probe only needs generic VA-API HEVC 10-bit encode.
+
+## Windows results: AverMedia capture rate (2026-11-09)
+
+Done for `docs/HANDOFF-WINDOWS-CAPTURE-RATE.md`, on the same laptop (Core Ultra X7 358H / Arc B390) booted into Windows 11 Pro 10.0.26200, the same AverMedia Live Gamer Ultra 2.1 (07ca:2553), camera and cable, about 1.5 hours after the Linux tests. Only the AverMedia was connected (the second USB adapter was unplugged); OBS closed for Test 1. USB port: the one Mike had it on (not identified further). Camera HDMI settings: not checked, Mike says unchanged (29.97).
+
+**Test 1, raw delivered rate (FFmpeg 9.0.2 DirectShow, 10 s, wall-clock timestamps, passthrough; P010 with the small DirectShow sample-grabber tool from the 0.16.0 work, since FFmpeg's dshow input cannot read P010):**
+
+| Mode | Requested | Windows | Linux (Ubuntu, same day) |
+|---|---|---|---|
+| 4K YUY2 | 29.97 | 298 frames / 10 s, 0 duplicates, mean gap 33.4 ms | 275 frames, 33/41 ms alternating |
+| 4K NV12 | 29.97 | 298, 0 duplicates, 33.4 ms | 275 |
+| 4K P010 | 30 | 298 (2 missing by the card's sample times) | not offered by stock UVC |
+| 1080p YUY2 | 29.97 | 296, 0 duplicates | 275 |
+| 1080p YUY2 | 50 / 60 | 496 / 596, 0 duplicates | 460 / 552 |
+| 1080p YUY2 | 25 | not offered by the card on Windows | 275 |
+| 4K MJPEG | 60 | 600 (59.97 fps) | 551-554 |
+
+No 33/41 ms pattern on Windows. Every row passes (>= 295 frames, duplicates < 0.5%).
+
+**Test 2, OBS recording** (stock portable OBS 33.0.1 in `_test`, plugin 0.16.0 rebuilt from `f92c045` including the Linux changes; P216 canvas 3840x2160 29.97, card YUY2 4K 29.97, QuickSync 4:2:2 encoder at High, 60 s): plugin `1782 frames ... no frames were repeated`, 2.3 ms per frame on the worker, 5.9 ms on OBS's thread, 0 over budget, OBS CPU 4.0% of 16 threads. File: hevc Rext, yuv422p10le, `hvc1`, 30000/1001, 1780 frames, 84 Mbit/s, full decode clean, picture and colours correct. Frame hashes: 20 identical consecutive frames, all frames 1-20 (card warm-up in the first 0.7 s), **0 in the remaining 1760** (Linux: 144 of 1890 spread through the recording).
+
+**Decision (first row of the table in the handoff):** card, camera and cable are fine; the frame loss is on the Linux side (the `uvcvideo` stream; the `Failed to resubmit video URB (-1)` errors point there). Next step is on Linux: CachyOS or a newer kernel, `journalctl -k` during a capture, `usbcore.autosuspend=-1`.
+
+**CPU, Windows vs Linux:** 4.0% (Windows) against about 7% (Linux) of 16 threads for the same recording; the plugin's own per-frame times are also lower on Windows (2.3 vs 4.4 ms worker, 5.9 vs 9.2 ms OBS thread). Not investigated. Likely contributors: OBS renders with Direct3D 11 on Windows and OpenGL on Linux, so reading the P216 frame back from the GPU costs more on Linux; the Linux source was a V4L2 capture, the Windows one DirectShow. The measurements were also taken differently (Windows: OBS process CPU time over the recording; Linux: as reported by Mike), so the gap is approximate.
+
+**"frames in flight: 1" on Linux is expected:** the QuickSync backend has `max_in_flight 1` on purpose (one oneVPL session, so frames stay in order). The 3-frame queue is inside that session (`QSV_PIPE` in `src/encoder-qsv.c`), not the plugin's worker slots that the log line counts. Windows logs the same `frames in flight: automatic (1, up to 1)`.
+
+**Not tested here:** another USB port, the camera's HDMI menu, Windows USB link-speed details, a P010 OBS recording in this round (the earlier 0.16.0 runs at 4K 30 P010 were also clean).
