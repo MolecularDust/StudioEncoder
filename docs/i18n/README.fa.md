@@ -51,6 +51,8 @@
 - **انکودرهای GPU با ۱۰ بیت 4:2:2:** H.264 برای کارت‌های NVIDIA سری RTX 50، و HEVC از طریق Intel QuickSync (روی یک CPU از نوع Intel Panther Lake آزموده شده).
 - **انکودرهای GPU با ۱۰ بیت 4:2:0:** HEVC با all-intra برای GPUهای AMD و برای کارت‌های NVIDIA قدیمی‌تر از سری RTX 50. OBS برای این GPUها از قبل انکودرهای سخت‌افزاری HEVC دارد، اما StudioEncoder با پیش‌تنظیم‌های ساده به‌جای تنظیمات پیچیده استفاده از آن‌ها را آسان‌تر می‌کند. GPUهای AMD نمی‌توانند 4:2:2 را انکود کنند، پس این‌ها 4:2:0 می‌مانند.
 
+<p align="center"><img src="../images/settings-window.png" alt="پنجرهٔ تنظیمات StudioEncoder (Tools > StudioEncoder) در OBS: فهرستی از انکودرها با چک‌باکس و گروه‌های جمع‌شدنی 10-bit 4:2:0 و Experimental" width="420"></p>
+
 از OBS 33.0 به بعد، مسیر Custom Output (FFmpeg) خطایی دارد که گاه‌گاه باعث خطای «non monotonically increasing dts» می‌شود و می‌تواند جلوی شروع یک ضبط جدید را بگیرد. StudioEncoder از این مسیر دوری می‌کند: انکودرهایش در حالت ضبط **Standard** اجرا می‌شوند و بدون مشکل کار می‌کنند.
 
 > **Apple ProRes نیست.** این افزونه غیررسمی است و وابسته به Apple نیست و Apple آن را تأیید نکرده است. Apple ProRes یک کدک دارای مجوز و گواهی‌شده است. انکودرهای اینجا پیاده‌سازی‌های مستقل قالب مستندشدهٔ عمومی (SMPTE RDD 36) هستند: `prores_aw` از FFmpeg (و انکودر AW+ که بر پایهٔ آن ساخته شده)، انکودر Rust به نام FilmCraft و انکودر Rust به نام OxideAV. خروجی آن‌ها در تدوین‌گرهای رایج مانند DaVinci Resolve پخش می‌شود، اما Apple آن را گواهی نکرده است.

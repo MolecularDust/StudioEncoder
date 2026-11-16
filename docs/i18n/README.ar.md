@@ -51,6 +51,8 @@
 - **مشفّرات GPU بـ 10 بت 4:2:2:** H.264 لبطاقات NVIDIA من سلسلة RTX 50، وHEVC عبر Intel QuickSync (جُرّب على معالج Intel Panther Lake).
 - **مشفّرات GPU بـ 10 بت 4:2:0:** HEVC بإطارات داخلية كاملة لمعالجات AMD الرسومية ولبطاقات NVIDIA الأقدم من سلسلة RTX 50. لدى OBS بالفعل مشفّرات HEVC عتادية لهذه المعالجات، لكن StudioEncoder يسهّل استخدامها بإعدادات مسبقة بسيطة بدل الإعدادات المعقدة. لا تستطيع معالجات AMD الرسومية ترميز 4:2:2، لذا تبقى هذه بنظام 4:2:0.
 
+<p align="center"><img src="../images/settings-window.png" alt="نافذة إعدادات StudioEncoder (Tools > StudioEncoder) في OBS: قائمة مشفّرات بمربعات اختيار ومجموعتان قابلتان للطي هما 10-bit 4:2:0 وExperimental" width="420"></p>
+
 منذ OBS 33.0، في مسار Custom Output (FFmpeg) خطأ يسبب أحيانًا الخطأ «non monotonically increasing dts» وقد يمنع تسجيلًا جديدًا من البدء. يتجنب StudioEncoder هذا المسار: تعمل مشفّراته في وضع التسجيل **Standard**، فتعمل بسلاسة.
 
 > **ليس Apple ProRes.** هذه الإضافة غير رسمية وليست تابعة لشركة Apple ولا معتمدة منها. Apple ProRes ترميز مرخّص ومعتمد. المشفّرات هنا تطبيقات مستقلة للصيغة الموثقة علنًا (SMPTE RDD 36): `prores_aw` من FFmpeg (ومشفّر AW+ المبني عليه)، ومشفّر FilmCraft المكتوب بلغة Rust، ومشفّر OxideAV المكتوب بلغة Rust. يُشغَّل ناتجها في برامج المونتاج الشائعة مثل DaVinci Resolve، لكنه غير معتمد من Apple.

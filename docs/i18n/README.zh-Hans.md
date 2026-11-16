@@ -51,6 +51,8 @@
 - **支持 10 位 4:2:2 的 GPU 编码器：** 面向 NVIDIA RTX 50 系列显卡的 H.264，以及通过 Intel QuickSync 的 HEVC（在 Intel Panther Lake CPU 上测试）。
 - **支持 10 位 4:2:0 的 GPU 编码器：** 面向 AMD GPU 和比 RTX 50 系列更早的 NVIDIA 显卡的全帧内 HEVC。OBS 已经为这些 GPU 提供了硬件 HEVC 编码器，但 StudioEncoder 用简单的预设取代晦涩的设置，让它们更易用。AMD GPU 无法编码 4:2:2，因此这些仍为 4:2:0。
 
+<p align="center"><img src="../images/settings-window.png" alt="OBS 中的 StudioEncoder 设置窗口（Tools > StudioEncoder）：带复选框的编码器列表，以及可折叠的 10-bit 4:2:0 和 Experimental 分组" width="420"></p>
+
 自 OBS 33.0 起，Custom Output (FFmpeg) 路径存在一个错误，偶尔会引发“non monotonically increasing dts”错误，并可能导致新的录制无法开始。StudioEncoder 避开了这条路径：它的编码器在 **Standard** 录制模式下运行，因此运行顺畅。
 
 > **不是 Apple ProRes。** 本插件为非官方产品，与 Apple 无关联，也未获 Apple 认可。Apple ProRes 是受许可、经认证的编解码器。这里的编码器是对公开文档格式（SMPTE RDD 36）的独立实现：FFmpeg 的 `prores_aw`（以及基于它构建的 AW+ 编码器）、FilmCraft Rust 编码器和 OxideAV Rust 编码器。它们的输出可以在 DaVinci Resolve 等常见剪辑软件中播放，但未经 Apple 认证。

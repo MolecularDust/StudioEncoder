@@ -51,6 +51,8 @@ Một plugin OBS Studio cho Windows, thêm các bộ mã hóa all-intra 10-bit v
 - **Bộ mã hóa GPU với 10-bit 4:2:2:** H.264 cho card NVIDIA dòng RTX 50, và HEVC qua Intel QuickSync (đã thử trên CPU Intel Panther Lake).
 - **Bộ mã hóa GPU với 10-bit 4:2:0:** HEVC all-intra cho GPU AMD và cho card NVIDIA cũ hơn dòng RTX 50. OBS đã có sẵn bộ mã hóa HEVC phần cứng cho các GPU này, nhưng StudioEncoder giúp dùng dễ hơn, với các thiết lập sẵn đơn giản thay cho những cài đặt khó hiểu. GPU AMD không mã hóa được 4:2:2 nên các bộ này vẫn là 4:2:0.
 
+<p align="center"><img src="../images/settings-window.png" alt="Cửa sổ cài đặt StudioEncoder (Tools > StudioEncoder) trong OBS: danh sách bộ mã hóa có hộp kiểm và các nhóm 10-bit 4:2:0 và Experimental có thể thu gọn" width="420"></p>
+
 Kể từ OBS 33.0, đường dẫn Custom Output (FFmpeg) có một lỗi thỉnh thoảng gây ra lỗi «non monotonically increasing dts» và có thể khiến bản ghi mới không bắt đầu được. StudioEncoder tránh đường dẫn này: các bộ mã hóa của nó chạy ở chế độ ghi **Standard**, nên chạy trơn tru.
 
 > **Không phải Apple ProRes.** Plugin này không chính thức, không liên kết với Apple và không được Apple chứng nhận. Apple ProRes là một codec có giấy phép và được chứng nhận. Các bộ mã hóa ở đây là bản triển khai độc lập của định dạng đã được công bố công khai (SMPTE RDD 36): `prores_aw` của FFmpeg (và bộ mã hóa AW+ xây dựng từ đó), bộ mã hóa Rust FilmCraft và bộ mã hóa Rust OxideAV. Đầu ra của chúng phát được trong các phần mềm dựng phổ biến, như DaVinci Resolve, nhưng không được Apple chứng nhận.

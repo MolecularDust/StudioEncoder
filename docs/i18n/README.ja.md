@@ -51,6 +51,8 @@ OBS Studio 33 以降に、10 ビットのオールイントラ（all-intra）エ
 - **10 ビット 4:2:2 対応の GPU エンコーダー:** NVIDIA RTX 50 シリーズ向けの H.264 と、Intel QuickSync 経由の HEVC（Intel Panther Lake CPU で動作確認）。
 - **10 ビット 4:2:0 対応の GPU エンコーダー:** AMD GPU と RTX 50 シリーズより古い NVIDIA カード向けのオールイントラ HEVC。OBS にはこれらの GPU 向けのハードウェア HEVC エンコーダーが既にありますが、StudioEncoder は難解な設定の代わりに簡単なプリセットを用意して使いやすくしています。AMD GPU は 4:2:2 をエンコードできないため、これらは 4:2:0 のままです。
 
+<p align="center"><img src="../images/settings-window.png" alt="OBS の StudioEncoder 設定ウィンドウ（Tools > StudioEncoder）: チェックボックス付きのエンコーダー一覧と、折りたたみ可能な 10-bit 4:2:0 および Experimental グループ" width="420"></p>
+
 OBS 33.0 の時点では、Custom Output (FFmpeg) の経路にバグがあり、ときどき「non monotonically increasing dts」エラーが発生して、新しい録画が始められなくなることがあります。StudioEncoder はこの経路を使いません。エンコーダーは **Standard** 録画モードで動作するため、スムーズに動きます。
 
 > **Apple ProRes ではありません。** このプラグインは非公式で、Apple とは無関係であり、Apple の承認も受けていません。Apple ProRes はライセンスされた認定コーデックです。ここにあるエンコーダーは、公開されている仕様（SMPTE RDD 36）の独立した実装です。FFmpeg の `prores_aw`（およびそれをもとにした AW+ エンコーダー）、FilmCraft の Rust エンコーダー、OxideAV の Rust エンコーダーです。出力は DaVinci Resolve などの一般的な編集ソフトで再生できますが、Apple の認定は受けていません。

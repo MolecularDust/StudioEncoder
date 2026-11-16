@@ -51,6 +51,8 @@ OBS Studio 33 이상에 10비트 올인트라(all-intra) 인코더를 추가하�
 - **10비트 4:2:2를 지원하는 GPU 인코더:** NVIDIA RTX 50 시리즈용 H.264, 그리고 Intel QuickSync를 통한 HEVC(Intel Panther Lake CPU에서 테스트).
 - **10비트 4:2:0을 지원하는 GPU 인코더:** AMD GPU와 RTX 50 시리즈보다 오래된 NVIDIA 카드용 올인트라 HEVC. OBS에는 이 GPU들을 위한 하드웨어 HEVC 인코더가 이미 있지만, StudioEncoder는 난해한 설정 대신 간단한 프리셋으로 더 쉽게 쓸 수 있게 합니다. AMD GPU는 4:2:2를 인코딩할 수 없으므로 이쪽은 4:2:0으로 남습니다.
 
+<p align="center"><img src="../images/settings-window.png" alt="OBS의 StudioEncoder 설정 창(Tools > StudioEncoder): 체크박스가 있는 인코더 목록과 접을 수 있는 10-bit 4:2:0 및 Experimental 그룹" width="420"></p>
+
 OBS 33.0 기준으로 Custom Output (FFmpeg) 경로에는 가끔 "non monotonically increasing dts" 오류를 일으켜 새 녹화가 시작되지 않게 만들 수 있는 버그가 있습니다. StudioEncoder는 이 경로를 피합니다. 인코더가 **Standard** 녹화 모드에서 동작하므로 문제없이 돌아갑니다.
 
 > **Apple ProRes가 아닙니다.** 이 플러그인은 비공식이며 Apple과 제휴 관계가 없고 Apple의 보증도 받지 않았습니다. Apple ProRes는 라이선스가 필요한 인증 코덱입니다. 여기 있는 인코더는 공개된 포맷(SMPTE RDD 36)의 독립 구현입니다. FFmpeg의 `prores_aw`(와 이를 바탕으로 만든 AW+ 인코더), FilmCraft Rust 인코더, OxideAV Rust 인코더입니다. 출력물은 DaVinci Resolve 같은 일반적인 편집기에서 재생되지만 Apple의 인증을 받은 것은 아닙니다.

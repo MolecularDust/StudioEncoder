@@ -51,6 +51,8 @@ OBS Studio 33 ve üzerine, kurguda akıcı çalışan MOV'a 4K kayıt için tüm
 - **10 bit 4:2:2 destekli GPU kodlayıcıları:** NVIDIA RTX 50 serisi kartlar için H.264 ve Intel QuickSync üzerinden HEVC (bir Intel Panther Lake CPU'da denendi).
 - **10 bit 4:2:0 destekli GPU kodlayıcıları:** AMD GPU'lar ve RTX 50 serisinden eski NVIDIA kartlar için all-intra HEVC. OBS'nin bu GPU'lar için zaten donanım HEVC kodlayıcıları var, ancak StudioEncoder bunları karmaşık ayarlar yerine basit hazır ayarlarla kullanmayı kolaylaştırır. AMD GPU'lar 4:2:2 kodlayamaz, bu yüzden bunlar 4:2:0 kalır.
 
+<p align="center"><img src="../images/settings-window.png" alt="OBS'de StudioEncoder ayar penceresi (Tools > StudioEncoder): onay kutulu bir kodlayıcı listesi ve daraltılabilir 10-bit 4:2:0 ile Experimental grupları" width="420"></p>
+
 OBS 33.0'dan itibaren Custom Output (FFmpeg) yolunda zaman zaman «non monotonically increasing dts» hatasına yol açan ve yeni bir kaydın başlamasını engelleyebilen bir hata var. StudioEncoder bu yoldan kaçınır: kodlayıcıları **Standard** kayıt modunda çalışır, böylece sorunsuz çalışır.
 
 > **Apple ProRes değildir.** Bu eklenti resmî değildir; Apple ile bağlantılı değildir ve Apple tarafından onaylanmamıştır. Apple ProRes lisanslı ve sertifikalı bir codec'tir. Buradaki kodlayıcılar, kamuya açık biçimin (SMPTE RDD 36) bağımsız uygulamalarıdır: FFmpeg'in `prores_aw` kodlayıcısı (ve ondan türetilen AW+ kodlayıcısı), FilmCraft Rust kodlayıcısı ve OxideAV Rust kodlayıcısı. Çıktıları DaVinci Resolve gibi yaygın kurgu programlarında oynatılır, ancak Apple tarafından sertifikalandırılmamıştır.

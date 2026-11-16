@@ -51,6 +51,8 @@ Ein OBS-Studio-Plugin für Windows, das OBS Studio 33 und neuer um All-Intra-Enc
 - **GPU-Encoder mit 10-Bit-4:2:2:** H.264 für NVIDIA-Karten der RTX-50-Serie und HEVC über Intel QuickSync (getestet auf einer Intel-Panther-Lake-CPU).
 - **GPU-Encoder mit 10-Bit-4:2:0:** All-Intra-HEVC für AMD-GPUs und für NVIDIA-Karten, die älter sind als die RTX-50-Serie. OBS hat für diese GPUs bereits Hardware-HEVC-Encoder, aber StudioEncoder macht sie mit einfachen Voreinstellungen statt kryptischer Einstellungen leichter nutzbar. AMD-GPUs können kein 4:2:2 encodieren, daher bleibt es hier bei 4:2:0.
 
+<p align="center"><img src="../images/settings-window.png" alt="Das StudioEncoder-Einstellungsfenster (Tools > StudioEncoder) in OBS: eine Liste von Encodern mit Kontrollkästchen und einklappbaren Gruppen für 10-bit 4:2:0 und Experimental" width="420"></p>
+
 Seit OBS 33.0 hat der Weg über Custom Output (FFmpeg) einen Fehler, der hin und wieder die Meldung „non monotonically increasing dts“ auslöst und verhindern kann, dass eine neue Aufnahme startet. StudioEncoder umgeht diesen Weg: Seine Encoder laufen im Aufnahmemodus **Standard** und arbeiten daher reibungslos.
 
 > **Nicht Apple ProRes.** Dieses Plugin ist inoffiziell und weder mit Apple verbunden noch von Apple unterstützt. Apple ProRes ist ein lizenzierter, zertifizierter Codec. Die Encoder hier sind unabhängige Implementierungen des öffentlich dokumentierten Formats (SMPTE RDD 36): `prores_aw` von FFmpeg (und der darauf aufbauende AW+-Encoder), der FilmCraft-Rust-Encoder und der OxideAV-Rust-Encoder. Ihre Ausgabe lässt sich in gängigen Schnittprogrammen wie DaVinci Resolve abspielen, ist aber nicht von Apple zertifiziert.
