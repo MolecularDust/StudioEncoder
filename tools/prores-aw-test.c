@@ -13,7 +13,7 @@ int main(int argc, char **argv)
 	if (argc == 3 && strcmp(argv[1], "selftest") == 0) {
 		const long n = atol(argv[2]);
 		const long bad = pa_selftest_simd(n);
-		printf("AVX2 vs C DCT: %ld blocks, %ld mismatches\n", n, bad);
+		printf("SIMD vs C DCT: %ld blocks, %ld mismatches\n", n, bad);
 		return bad == 0 ? 0 : 1;
 	}
 	if (argc != 8) {
@@ -32,7 +32,7 @@ int main(int argc, char **argv)
 	struct pa_ctx *ctx = pa_create(w, h, profile, round8, "apl0", 2, 2, 2);
 	if (getenv("PA_NO_SIMD"))
 		pa_set_simd(0);
-	fprintf(stderr, "DCT: %s\n", pa_simd_active() ? "AVX2" : "C");
+	fprintf(stderr, "DCT: %s\n", pa_simd_name());
 	if (!frame || !pkt || !ctx)
 		return 1;
 	double secs = 0;

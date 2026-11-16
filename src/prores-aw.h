@@ -30,11 +30,13 @@ void pa_destroy(struct pa_ctx *ctx);
  * raise the quantiser, which loses quality again. */
 int pa_default_round8(int profile);
 
-/* The forward DCT runs with AVX2 when the CPU supports it (chosen on the first pa_create), otherwise in plain C;
- * both give identical output. pa_set_simd(0) forces plain C. pa_selftest_simd compares the two on generated
- * blocks and returns the number of mismatching blocks, or -1 without AVX2. */
+/* The forward DCT and the coefficient scan run with AVX2 (x86-64, when the CPU supports it) or NEON (ARM64)
+ * (chosen on the first pa_create), otherwise in plain C; all give identical output. pa_set_simd(0) forces plain C.
+ * pa_selftest_simd compares the SIMD DCT with the C one on generated blocks and returns the number of
+ * mismatching blocks, or -1 when there is no SIMD version. pa_simd_name is "AVX2", "NEON" or "plain C". */
 void pa_set_simd(int enable);
 int pa_simd_active(void);
+const char *pa_simd_name(void);
 long pa_selftest_simd(long blocks);
 
 /* Worst-case size of one encoded frame, for sizing the output buffer. */

@@ -616,6 +616,194 @@ static int cpu_has_avx2(void)
 }
 #endif /* x86-64 */
 
+/* ---- the same two routines with NEON (Windows/Linux ARM64; NEON is part of the baseline there) ----
+ * fdct_get_neon runs the DCT on four lines per 128-bit vector (two vectors per pass), with the same 32-bit
+ * wrapping integer steps as fdct_10, so the output is bit-identical. encode_acs_neon builds the same
+ * per-frequency bitmasks as the AVX2 version, eight coefficients at a time. */
+
+#if defined(_M_ARM64) || defined(__aarch64__)
+#define PA_HAVE_NEON 1
+#include <arm_neon.h>
+
+#if defined(_MSC_VER)
+static inline int pa_ctz32(uint32_t v)
+{
+	unsigned long i;
+	_BitScanForward(&i, v);
+	return (int)i;
+}
+static inline int pa_ctz64(uint64_t v)
+{
+	unsigned long i;
+	_BitScanForward64(&i, v);
+	return (int)i;
+}
+#else
+#define pa_ctz32(v) __builtin_ctz(v)
+#define pa_ctz64(v) __builtin_ctzll(v)
+#endif
+
+/* 8x8 transpose of 16-bit values: on return r[k] holds column k */
+static inline void pa_transpose8_neon(int16x8_t r[8])
+{
+	const int16x8x2_t t0 = vtrnq_s16(r[0], r[1]), t1 = vtrnq_s16(r[2], r[3]);
+	const int16x8x2_t t2 = vtrnq_s16(r[4], r[5]), t3 = vtrnq_s16(r[6], r[7]);
+	const int32x4x2_t a = vtrnq_s32(vreinterpretq_s32_s16(t0.val[0]), vreinterpretq_s32_s16(t1.val[0]));
+	const int32x4x2_t b = vtrnq_s32(vreinterpretq_s32_s16(t0.val[1]), vreinterpretq_s32_s16(t1.val[1]));
+	const int32x4x2_t c = vtrnq_s32(vreinterpretq_s32_s16(t2.val[0]), vreinterpretq_s32_s16(t3.val[0]));
+	const int32x4x2_t d = vtrnq_s32(vreinterpretq_s32_s16(t2.val[1]), vreinterpretq_s32_s16(t3.val[1]));
+#define PA_LO(x) vget_low_s16(vreinterpretq_s16_s32(x))
+#define PA_HI(x) vget_high_s16(vreinterpretq_s16_s32(x))
+	r[0] = vcombine_s16(PA_LO(a.val[0]), PA_LO(c.val[0]));
+	r[4] = vcombine_s16(PA_HI(a.val[0]), PA_HI(c.val[0]));
+	r[2] = vcombine_s16(PA_LO(a.val[1]), PA_LO(c.val[1]));
+	r[6] = vcombine_s16(PA_HI(a.val[1]), PA_HI(c.val[1]));
+	r[1] = vcombine_s16(PA_LO(b.val[0]), PA_LO(d.val[0]));
+	r[5] = vcombine_s16(PA_HI(b.val[0]), PA_HI(d.val[0]));
+	r[3] = vcombine_s16(PA_LO(b.val[1]), PA_LO(d.val[1]));
+	r[7] = vcombine_s16(PA_HI(b.val[1]), PA_HI(d.val[1]));
+#undef PA_LO
+#undef PA_HI
+}
+
+#define PA_NMUL(v, k) vmulq_n_s32((v), (k))
+
+/* one pass of the LL&M DCT over four independent lines held in v[0..7] (lane = line); first = row pass */
+static inline void pa_pass_neon(const int32x4_t v[8], int32x4_t o[8], int first)
+{
+	const int32x4_t tmp0 = vaddq_s32(v[0], v[7]);
+	const int32x4_t tmp7 = vsubq_s32(v[0], v[7]);
+	const int32x4_t tmp1 = vaddq_s32(v[1], v[6]);
+	const int32x4_t tmp6 = vsubq_s32(v[1], v[6]);
+	const int32x4_t tmp2 = vaddq_s32(v[2], v[5]);
+	const int32x4_t tmp5 = vsubq_s32(v[2], v[5]);
+	const int32x4_t tmp3 = vaddq_s32(v[3], v[4]);
+	const int32x4_t tmp4 = vsubq_s32(v[3], v[4]);
+	const int32x4_t tmp10 = vaddq_s32(tmp0, tmp3);
+	const int32x4_t tmp13 = vsubq_s32(tmp0, tmp3);
+	const int32x4_t tmp11 = vaddq_s32(tmp1, tmp2);
+	const int32x4_t tmp12 = vsubq_s32(tmp1, tmp2);
+
+	if (first) {
+		o[0] = vshlq_n_s32(vaddq_s32(tmp10, tmp11), PASS1_BITS);
+		o[4] = vshlq_n_s32(vsubq_s32(tmp10, tmp11), PASS1_BITS);
+	} else {
+		const int32x4_t r0 = vdupq_n_s32(1 << (OUT_SHIFT - 1)), s0 = vdupq_n_s32(-OUT_SHIFT);
+		o[0] = vshlq_s32(vaddq_s32(vaddq_s32(tmp10, tmp11), r0), s0);
+		o[4] = vshlq_s32(vaddq_s32(vsubq_s32(tmp10, tmp11), r0), s0);
+	}
+	const int sh = first ? CONST_BITS - PASS1_BITS : CONST_BITS + OUT_SHIFT;
+	const int32x4_t rnd = vdupq_n_s32(1 << (sh - 1)), shc = vdupq_n_s32(-sh);
+#define PA_NDS(x) vshlq_s32(vaddq_s32((x), rnd), shc)
+
+	int32x4_t z1 = PA_NMUL(vaddq_s32(tmp12, tmp13), FIX_0_541196100);
+	o[2] = PA_NDS(vaddq_s32(z1, PA_NMUL(tmp13, FIX_0_765366865)));
+	o[6] = PA_NDS(vaddq_s32(z1, PA_NMUL(tmp12, -FIX_1_847759065)));
+
+	z1 = vaddq_s32(tmp4, tmp7);
+	int32x4_t z2 = vaddq_s32(tmp5, tmp6);
+	int32x4_t z3 = vaddq_s32(tmp4, tmp6);
+	int32x4_t z4 = vaddq_s32(tmp5, tmp7);
+	const int32x4_t z5 = PA_NMUL(vaddq_s32(z3, z4), FIX_1_175875602);
+	const int32x4_t t4 = PA_NMUL(tmp4, FIX_0_298631336);
+	const int32x4_t t5 = PA_NMUL(tmp5, FIX_2_053119869);
+	const int32x4_t t6 = PA_NMUL(tmp6, FIX_3_072711026);
+	const int32x4_t t7 = PA_NMUL(tmp7, FIX_1_501321110);
+	z1 = PA_NMUL(z1, -FIX_0_899976223);
+	z2 = PA_NMUL(z2, -FIX_2_562915447);
+	z3 = vaddq_s32(PA_NMUL(z3, -FIX_1_961570560), z5);
+	z4 = vaddq_s32(PA_NMUL(z4, -FIX_0_390180644), z5);
+	o[7] = PA_NDS(vaddq_s32(vaddq_s32(t4, z1), z3));
+	o[5] = PA_NDS(vaddq_s32(vaddq_s32(t5, z2), z4));
+	o[3] = PA_NDS(vaddq_s32(vaddq_s32(t6, z2), z3));
+	o[1] = PA_NDS(vaddq_s32(vaddq_s32(t7, z1), z4));
+#undef PA_NDS
+}
+
+/* widen eight 16-bit vectors to two sets of 32-bit lanes, run one pass on each, narrow back (low 16 bits, like
+ * the int16_t stores in fdct_10) */
+static inline void pa_pass16_neon(int16x8_t r[8], int first)
+{
+	int32x4_t lo[8], hi[8], olo[8], ohi[8];
+	for (int k = 0; k < 8; k++) {
+		lo[k] = vmovl_s16(vget_low_s16(r[k]));
+		hi[k] = vmovl_high_s16(r[k]);
+	}
+	pa_pass_neon(lo, olo, first);
+	pa_pass_neon(hi, ohi, first);
+	for (int k = 0; k < 8; k++)
+		r[k] = vcombine_s16(vmovn_s32(olo[k]), vmovn_s32(ohi[k]));
+}
+
+static void fdct_get_neon(const uint16_t *src, size_t stride, int16_t *block)
+{
+	int16x8_t r[8];
+	for (int k = 0; k < 8; k++)
+		r[k] = vld1q_s16((const int16_t *)(src + k * stride)); /* 10-bit samples: same bits as int16 */
+
+	pa_transpose8_neon(r); /* r[k] = element k of every row: one row per lane */
+	pa_pass16_neon(r, 1);  /* r[k] = row-pass output k of every row */
+	pa_transpose8_neon(r); /* r[k] = row k of the intermediate block: one column per lane */
+	pa_pass16_neon(r, 0);  /* r[k] = output row k */
+
+	for (int k = 0; k < 8; k++)
+		vst1q_s16(block + 8 * k, r[k]);
+}
+
+/* Same output as encode_acs_c; see encode_acs_avx2 for how it works. */
+static void encode_acs_neon(struct bitw *pb, const int16_t *blocks, int blocks_per_slice, const int *qmat,
+			    const uint32_t *rcp, int round8)
+{
+	uint16_t qv[64], ov[64];
+	uint32_t posmask[64] = {0}; /* bit b: block b is non-zero at this (natural order) position */
+	static const uint8_t bitw8[8] = {1, 2, 4, 8, 16, 32, 64, 128};
+	const uint8x8_t weights = vld1_u8(bitw8);
+
+	for (int k = 0; k < 64; k++) {
+		qv[k] = (uint16_t)qmat[k];
+		ov[k] = (uint16_t)((unsigned)qmat[k] * (unsigned)round8 / 8);
+	}
+	for (int b = 0; b < blocks_per_slice; b++) {
+		const int16_t *blk = blocks + b * 64;
+		uint64_t m = 0;
+		for (int g = 0; g < 8; g++) {
+			const int16x8_t x = vld1q_s16(blk + 8 * g);
+			const uint16x8_t a = vaddq_u16(vreinterpretq_u16_s16(vabsq_s16(x)), vld1q_u16(ov + 8 * g));
+			const uint16x8_t nz = vcgeq_u16(a, vld1q_u16(qv + 8 * g)); /* a >= q, unsigned */
+			m |= (uint64_t)vaddv_u8(vand_u8(vmovn_u16(nz), weights)) << (8 * g);
+		}
+		m &= ~1ull; /* the DC coefficient is coded separately */
+		while (m) {
+			posmask[pa_ctz64(m)] |= 1u << b;
+			m &= m - 1;
+		}
+	}
+
+	int prev_run = 4, prev_level = 2, run = 0;
+	for (int i = 1; i < 64; i++) {
+		const int pos = progressive_scan[i];
+		uint32_t m = posmask[pos];
+		if (!m) {
+			run += blocks_per_slice;
+			continue;
+		}
+		const unsigned offset = ov[pos];
+		const uint64_t r = rcp[pos];
+		int next = 0;
+		while (m) {
+			const int b = pa_ctz32(m);
+			run += b - next;
+			const int x = blocks[b * 64 + pos];
+			const unsigned a = (unsigned)(x < 0 ? -x : x) + offset;
+			emit_ac(pb, x, a, r, &run, &prev_run, &prev_level);
+			next = b + 1;
+			m &= m - 1;
+		}
+		run += blocks_per_slice - next;
+	}
+}
+#endif /* ARM64 */
+
 typedef void (*fdct_get_fn)(const uint16_t *src, size_t stride, int16_t *block);
 typedef void (*encode_acs_fn)(struct bitw *pb, const int16_t *blocks, int blocks_per_slice, const int *qmat,
 			      const uint32_t *rcp, int round8);
@@ -628,6 +816,9 @@ void pa_set_simd(int enable)
 	const int avx2 = enable && cpu_has_avx2();
 	fdct_get = avx2 ? fdct_get_avx2 : fdct_get_c;
 	encode_acs = avx2 ? encode_acs_avx2 : encode_acs_c;
+#elif defined(PA_HAVE_NEON)
+	fdct_get = enable ? fdct_get_neon : fdct_get_c;
+	encode_acs = enable ? encode_acs_neon : encode_acs_c;
 #else
 	(void)enable;
 	fdct_get = fdct_get_c;
@@ -640,11 +831,29 @@ int pa_simd_active(void)
 	return fdct_get != fdct_get_c;
 }
 
+const char *pa_simd_name(void)
+{
+	if (!pa_simd_active())
+		return "plain C";
+#if defined(PA_HAVE_AVX2)
+	return "AVX2";
+#elif defined(PA_HAVE_NEON)
+	return "NEON";
+#else
+	return "SIMD";
+#endif
+}
+
 long pa_selftest_simd(long blocks)
 {
-#ifdef PA_HAVE_AVX2
+#if defined(PA_HAVE_AVX2)
+#define PA_SELFTEST_FN fdct_get_avx2
 	if (!cpu_has_avx2())
 		return -1;
+#elif defined(PA_HAVE_NEON)
+#define PA_SELFTEST_FN fdct_get_neon
+#endif
+#ifdef PA_SELFTEST_FN
 	uint16_t src[64];
 	int16_t a[64], b[64];
 	uint32_t seed = 12345;
@@ -661,7 +870,7 @@ long pa_selftest_simd(long blocks)
 							: (r % 3 == 0 ? 1023 : (r % 3 == 1 ? 0 : 512)));
 		}
 		fdct_get_c(src, 8, a);
-		fdct_get_avx2(src, 8, b);
+		PA_SELFTEST_FN(src, 8, b);
 		if (memcmp(a, b, sizeof(a)) != 0)
 			mismatches++;
 	}

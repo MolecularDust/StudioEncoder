@@ -46,7 +46,7 @@ static void *awp_create(const struct pr_params *p, char *err, size_t err_len)
 	}
 	static bool logged = false;
 	if (!logged) {
-		obs_log(LOG_INFO, "aw+: DCT uses %s", pa_simd_active() ? "AVX2" : "plain C (no AVX2 on this CPU)");
+		obs_log(LOG_INFO, "aw+: DCT uses %s", pa_simd_active() ? pa_simd_name() : "plain C (no SIMD on this CPU)");
 		logged = true;
 	}
 	const size_t luma = (size_t)p->width * p->height;
