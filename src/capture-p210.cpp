@@ -13,7 +13,10 @@
 #include <dshow.h>
 #include <dvdmedia.h>
 #include <wrl/client.h>
+#if defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
+#define SE_P210_SSE2 1 /* other targets (Windows ARM64) use the plain C loops */
+#endif
 
 #include <atomic>
 #include <condition_variable>
@@ -243,8 +246,10 @@ struct p210_capture {
 static void shift_row(const uint16_t *src, uint16_t *dst, uint32_t n)
 {
 	uint32_t i = 0;
+#ifdef SE_P210_SSE2
 	for (; i + 8 <= n; i += 8)
 		_mm_storeu_si128((__m128i *)(dst + i), _mm_srli_epi16(_mm_loadu_si128((const __m128i *)(src + i)), 6));
+#endif
 	for (; i < n; i++)
 		dst[i] = src[i] >> 6;
 }
@@ -254,6 +259,7 @@ static void shift_row(const uint16_t *src, uint16_t *dst, uint32_t n)
 static void split_row(const uint16_t *src, uint16_t *cb, uint16_t *cr, uint32_t pairs)
 {
 	uint32_t i = 0;
+#ifdef SE_P210_SSE2
 	for (; i + 8 <= pairs; i += 8) {
 		const __m128i a = _mm_srli_epi16(_mm_loadu_si128((const __m128i *)(src + 2 * i)), 6);
 		const __m128i b = _mm_srli_epi16(_mm_loadu_si128((const __m128i *)(src + 2 * i + 8)), 6);
@@ -262,6 +268,7 @@ static void split_row(const uint16_t *src, uint16_t *cb, uint16_t *cr, uint32_t 
 		_mm_storeu_si128((__m128i *)(cb + i), _mm_packs_epi32(a_lo, b_lo));
 		_mm_storeu_si128((__m128i *)(cr + i), _mm_packs_epi32(_mm_srai_epi32(a, 16), _mm_srai_epi32(b, 16)));
 	}
+#endif
 	for (; i < pairs; i++) {
 		cb[i] = src[2 * i] >> 6;
 		cr[i] = src[2 * i + 1] >> 6;

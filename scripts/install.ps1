@@ -9,16 +9,18 @@
 #>
 param(
   [string]$Portable = "",
-  [string]$Config = "Release"
+  [string]$Config = "Release",
+  [ValidateSet('x64', 'arm64')][string]$Arch = 'x64'
 )
 
 $ErrorActionPreference = 'Stop'
 $name = 'obs-studioencoder'
 $root = Split-Path -Parent $PSScriptRoot
-$stage = Join-Path $root 'build_x64\stage'
+$build = Join-Path $root "build_$Arch"
+$stage = Join-Path $build 'stage'
 
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-cmake --install (Join-Path $root 'build_x64') --config $Config --prefix $stage | Out-Null
+cmake --install $build --config $Config --prefix $stage | Out-Null
 $src = Join-Path $stage $name
 if (-not (Test-Path (Join-Path $src "$name.dll"))) { throw "Build output not found in $src. Build first." }
 

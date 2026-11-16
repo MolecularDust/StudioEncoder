@@ -6,7 +6,8 @@ include(buildspec_common)
 
 # _check_dependencies_windows: Set up Windows slice for _check_dependencies
 function(_check_dependencies_windows)
-  set(arch ${CMAKE_VS_PLATFORM_NAME})
+  # CMake reports "ARM64"; the release files and buildspec.json keys use "arm64"
+  string(TOLOWER "${CMAKE_VS_PLATFORM_NAME}" arch)
   set(platform windows-${arch})
 
   set(dependencies_dir "${CMAKE_CURRENT_SOURCE_DIR}/.deps")

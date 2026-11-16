@@ -40,7 +40,7 @@ add_dependencies(${CMAKE_PROJECT_NAME} studioencoder_rs_build)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${RUST_LIB}")
 # system libraries required by the Rust standard library
 if(WIN32)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ws2_32 userenv ntdll bcrypt advapi32 kernel32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ws2_32 userenv ntdll bcrypt advapi32 kernel32 synchronization)
 elseif(UNIX AND NOT APPLE)
   find_package(Threads REQUIRED)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m rt)
@@ -92,7 +92,11 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 
 # Plugin Manager metadata (Tools > Plugin Manager reads the version from data/manifest.json).
 if(WIN32)
-  set(PLUGIN_OS_ARCH "windows-x64")
+  if(CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
+    set(PLUGIN_OS_ARCH "windows-arm64")
+  else()
+    set(PLUGIN_OS_ARCH "windows-x64")
+  endif()
 else()
   set(PLUGIN_OS_ARCH "linux-x86_64")
 endif()
