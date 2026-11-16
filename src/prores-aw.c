@@ -139,23 +139,25 @@ static inline int log2_floor(unsigned v)
 
 /* ---- entropy coding (proresenc_anatoliy.c) ---- */
 
-/* Append n bits (1..32) whose value already fits in n bits. */
+/* Append n bits (1..32) whose value already fits in n bits.
+ * Whether a 32-bit word is complete changes from one call to the next without a pattern, so a branch on it is
+ * mispredicted often. Instead the word is always stored (when 4 bytes are left, which is almost always true) and
+ * the write pointer only moves past it once the word is complete; an incomplete word is overwritten later. */
 static inline void bw_put_raw(struct bitw *b, int n, uint32_t v)
 {
 	b->acc = (b->acc << n) | v; /* fewer than 32 bits are pending, so this fits in 64 */
 	b->nbits += n;
-	if (b->nbits >= 32) {
-		b->nbits -= 32;
-		const uint32_t w = (uint32_t)(b->acc >> b->nbits);
-		if (b->end - b->ptr >= 4) {
-			b->ptr[0] = (uint8_t)(w >> 24);
-			b->ptr[1] = (uint8_t)(w >> 16);
-			b->ptr[2] = (uint8_t)(w >> 8);
-			b->ptr[3] = (uint8_t)w;
-			b->ptr += 4;
-		} else {
-			b->overflow = 1;
-		}
+	const int full = b->nbits >= 32;
+	b->nbits -= full << 5;
+	const uint32_t w = (uint32_t)(b->acc >> b->nbits);
+	if (b->end - b->ptr >= 4) {
+		b->ptr[0] = (uint8_t)(w >> 24);
+		b->ptr[1] = (uint8_t)(w >> 16);
+		b->ptr[2] = (uint8_t)(w >> 8);
+		b->ptr[3] = (uint8_t)w;
+		b->ptr += full << 2;
+	} else {
+		b->overflow |= full;
 	}
 }
 
@@ -189,6 +191,31 @@ static inline uint32_t vlc_code(unsigned codebook, unsigned val, int *len)
 	}
 	*len = (int)(val >> rice_order) + 1 + (int)rice_order;
 	return (1u << rice_order) | (val & ((1u << rice_order) - 1));
+}
+
+/* Codewords for the run and level codebooks, looked up instead of computed for the small values that make up
+ * nearly all AC coefficients: vlc_code's branch between its Rice and exp-Golomb parts is hard to predict. Indexed
+ * by the context (prev_run 0..15, prev_level 0..9) and the value; filled once from vlc_code (pa_init_tables). */
+#define PA_VLC_TAB 64
+struct pa_vlc {
+	uint32_t code;
+	uint32_t len;
+};
+static struct pa_vlc run_vlc[16][PA_VLC_TAB], level_vlc[10][PA_VLC_TAB];
+
+static void pa_init_tables(void)
+{
+	for (unsigned v = 0; v < PA_VLC_TAB; v++) {
+		int len;
+		for (int k = 0; k < 16; k++) {
+			run_vlc[k][v].code = vlc_code(run_to_cb[k], v, &len);
+			run_vlc[k][v].len = (uint32_t)len;
+		}
+		for (int k = 0; k < 10; k++) {
+			level_vlc[k][v].code = vlc_code(level_to_cb[k], v, &len);
+			level_vlc[k][v].len = (uint32_t)len;
+		}
+	}
 }
 
 static inline void put_vlc(struct bitw *pb, unsigned codebook, unsigned val)
@@ -238,8 +265,19 @@ static inline void emit_ac(struct bitw *pb, int x, unsigned a, uint64_t r, int *
 {
 	const int abs_level = (int)((a * r) >> 32);
 	int lr, ll;
-	const uint32_t cr = vlc_code(run_to_cb[*prev_run], (unsigned)*run, &lr);
-	const uint32_t cl = vlc_code(level_to_cb[*prev_level], (unsigned)abs_level - 1, &ll);
+	uint32_t cr, cl;
+	if ((unsigned)*run < PA_VLC_TAB) {
+		cr = run_vlc[*prev_run][*run].code;
+		lr = (int)run_vlc[*prev_run][*run].len;
+	} else {
+		cr = vlc_code(run_to_cb[*prev_run], (unsigned)*run, &lr);
+	}
+	if ((unsigned)abs_level - 1 < PA_VLC_TAB) {
+		cl = level_vlc[*prev_level][abs_level - 1].code;
+		ll = (int)level_vlc[*prev_level][abs_level - 1].len;
+	} else {
+		cl = vlc_code(level_to_cb[*prev_level], (unsigned)abs_level - 1, &ll);
+	}
 	const uint64_t lev = ((uint64_t)cl << 1) | (x < 0 ? 1u : 0u);
 	if (lr + ll + 1 <= 64) {
 		bw_put64(pb, lr + ll + 1, ((uint64_t)cr << (ll + 1)) | lev);
@@ -1079,8 +1117,9 @@ struct pa_ctx *pa_create(int width, int height, int profile, int round8, const c
 		return NULL;
 
 	static int simd_ready = 0;
-	if (!simd_ready) { /* pick the DCT once: AVX2 when the CPU has it */
+	if (!simd_ready) { /* once: pick the DCT (AVX2 or NEON when available) and fill the codeword tables */
 		pa_set_simd(1);
+		pa_init_tables();
 		simd_ready = 1;
 	}
 

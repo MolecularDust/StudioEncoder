@@ -14,6 +14,9 @@
 #if defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
 #define PR_HAVE_SSE2 1
+#elif defined(_M_ARM64) || defined(__aarch64__)
+#include <arm_neon.h>
+#define PR_HAVE_NEON 1
 #endif
 
 /* ProRes FourCCs, stored the way obs-ffmpeg-mux expects "codec_type": the four characters read as a
@@ -823,6 +826,10 @@ void pr_p216_to_planar10(const uint8_t *src_y, size_t src_y_stride, const uint8_
 			v = _mm_srli_epi16(_mm_adds_epu16(v, bias), 6);
 			_mm_storeu_si128((__m128i *)(d + x), v);
 		}
+#elif defined(PR_HAVE_NEON)
+		const uint16x8_t bias = vdupq_n_u16(32);
+		for (; x + 8 <= width; x += 8)
+			vst1q_u16(d + x, vshrq_n_u16(vqaddq_u16(vld1q_u16(s + x), bias), 6));
 #endif
 		for (; x < width; x++)
 			d[x] = round10(s[x]);
@@ -843,6 +850,13 @@ void pr_p216_to_planar10(const uint8_t *src_y, size_t src_y_stride, const uint8_
 			__m128i v = _mm_packs_epi32(_mm_srli_epi32(a, 16), _mm_srli_epi32(b, 16));
 			_mm_storeu_si128((__m128i *)(cb + x), u);
 			_mm_storeu_si128((__m128i *)(cr + x), v);
+		}
+#elif defined(PR_HAVE_NEON)
+		for (; x + 8 <= cw; x += 8) {
+			/* vld2q splits eight U,V pairs into a U vector and a V vector */
+			const uint16x8x2_t p = vld2q_u16(uv + 2 * x);
+			vst1q_u16(cb + x, vshrq_n_u16(vqaddq_u16(p.val[0], bias), 6));
+			vst1q_u16(cr + x, vshrq_n_u16(vqaddq_u16(p.val[1], bias), 6));
 		}
 #endif
 		for (; x < cw; x++) {
