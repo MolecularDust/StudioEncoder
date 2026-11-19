@@ -56,7 +56,7 @@ function(_setup_obs_studio)
     set(_cmake_generator "${CMAKE_GENERATOR}")
     # OBS's own configure step expects the generator platform in CMake's spelling ("ARM64"), not the lowercase arch
     set(_cmake_arch "-A ${CMAKE_VS_PLATFORM_NAME},version=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
-    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION} -DCMAKE_ENABLE_SCRIPTING=OFF")
+    set(_cmake_extra "-DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION}" -DENABLE_SCRIPTING=OFF -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF)
   elseif(OS_MACOS)
     set(_cmake_generator "Xcode")
     set(_cmake_arch "-DCMAKE_OSX_ARCHITECTURES:STRING='arm64;x86_64'")
