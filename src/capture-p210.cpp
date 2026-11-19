@@ -1,10 +1,4 @@
-/* SE: 10-bit 4:2:2 capture (P210), Windows only.
- * Opens a DirectShow capture device in the P210 format (10-bit 4:2:2, luma plane + interleaved CbCr plane,
- * 16-bit samples with the 10 bits at the top) and hands each frame to OBS as I210 (three planes, 10 bits at the
- * bottom): a shift and a CbCr split, no loss. OBS 33 takes P216 frames from a source but has no shader to draw
- * them (it shows nothing), while I210 is drawn. OBS's own Video Capture Device source cannot do any of this:
- * its DirectShow library stops at P010 (4:2:0). Frames come from the Sample Grabber filter (qedit.dll), as in
- * tools/p210-probe.cpp. */
+/* Windows DirectShow capture. P210 is split into I210; packed v210 goes directly to OBS. */
 #include <obs-module.h>
 #include <plugin-support.h>
 #include <util/platform.h>
@@ -49,10 +43,10 @@ struct ISampleGrabber : public IUnknown {
 	virtual HRESULT STDMETHODCALLTYPE SetCallback(ISampleGrabberCB *cb, long which) = 0;
 };
 
-static GUID p210_subtype()
+static GUID capture_subtype(bool v210)
 {
 	GUID g = {0x00000000, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
-	g.Data1 = MAKEFOURCC('P', '2', '1', '0');
+	g.Data1 = v210 ? MAKEFOURCC('v', '2', '1', '0') : MAKEFOURCC('P', '2', '1', '0');
 	return g;
 }
 
@@ -66,15 +60,20 @@ static const frame_rate frame_rates[] = {
 	{24, 1, "24"},          {60000, 1001, "59.94"}, {60, 1, "60"}, {50, 1, "50"},
 };
 
-static void free_media_type(AM_MEDIA_TYPE *mt)
+static void clear_media_type(AM_MEDIA_TYPE *mt)
 {
-	if (!mt)
-		return;
 	if (mt->cbFormat)
 		CoTaskMemFree(mt->pbFormat);
 	if (mt->pUnk)
 		mt->pUnk->Release();
-	CoTaskMemFree(mt);
+}
+
+static void free_media_type(AM_MEDIA_TYPE *mt)
+{
+	if (mt) {
+		clear_media_type(mt);
+		CoTaskMemFree(mt);
+	}
 }
 
 static BITMAPINFOHEADER *video_header(AM_MEDIA_TYPE *mt, REFERENCE_TIME **avg)
@@ -142,8 +141,9 @@ static std::vector<device_info> list_video_devices()
 	return out;
 }
 
-/* Finds the P210 entry of a filter's capture pin (in a graph built with `builder`). */
-static AM_MEDIA_TYPE *find_p210(ICaptureGraphBuilder2 *builder, IBaseFilter *filter, ComPtr<IAMStreamConfig> &config)
+static AM_MEDIA_TYPE *find_capture_format(ICaptureGraphBuilder2 *builder, IBaseFilter *filter,
+					  ComPtr<IAMStreamConfig> &config, bool v210, uint32_t width = 0,
+					  uint32_t height = 0, REFERENCE_TIME interval = 0)
 {
 	if (FAILED(builder->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, filter, IID_PPV_ARGS(&config))))
 		return nullptr;
@@ -156,14 +156,18 @@ static AM_MEDIA_TYPE *find_p210(ICaptureGraphBuilder2 *builder, IBaseFilter *fil
 		if (FAILED(config->GetStreamCaps(i, &mt, caps.data())))
 			continue;
 		REFERENCE_TIME *avg = nullptr;
-		if (mt->subtype == p210_subtype() && video_header(mt, &avg))
+		const auto *bmi = video_header(mt, &avg);
+		if (mt->subtype == capture_subtype(v210) && bmi &&
+		    (!v210 || !width ||
+		     (bmi->biWidth == (LONG)width && bmi->biHeight == (LONG)height &&
+		      *avg >= interval - 2 && *avg <= interval + 2)))
 			return mt;
 		free_media_type(mt);
 	}
 	return nullptr;
 }
 
-static bool device_offers_p210(IMoniker *moniker)
+static bool device_offers_format(IMoniker *moniker, bool v210)
 {
 	ComPtr<IBaseFilter> filter;
 	ComPtr<IGraphBuilder> graph;
@@ -176,16 +180,17 @@ static bool device_offers_p210(IMoniker *moniker)
 	if (FAILED(graph->AddFilter(filter.Get(), L"source")))
 		return false;
 	ComPtr<IAMStreamConfig> config;
-	AM_MEDIA_TYPE *mt = find_p210(builder.Get(), filter.Get(), config);
+	AM_MEDIA_TYPE *mt = find_capture_format(builder.Get(), filter.Get(), config, v210);
+	const bool found = mt != nullptr;
 	free_media_type(mt);
-	graph->RemoveFilter(filter.Get());
-	return mt != nullptr;
+	return found;
 }
 
 /* --- source ----------------------------------------------------------------------------------- */
 
 struct capture_config {
-	std::string device; /* device path; empty = first device that offers P210 */
+	std::string device; /* device path; empty = first device offering the selected format */
+	bool v210 = false;
 	uint32_t width = 3840, height = 2160;
 	frame_rate rate = frame_rates[0];
 	video_colorspace colorspace = VIDEO_CS_709;
@@ -231,6 +236,7 @@ struct p210_capture {
 	FrameSink sink;
 	std::atomic<bool> running{false};
 	uint32_t width = 0, height = 0;
+	bool v210 = false;
 	uint64_t base_ns = 0;
 	float color_matrix[16];
 	float range_min[3], range_max[3];
@@ -280,38 +286,43 @@ STDMETHODIMP FrameSink::BufferCB(double time, BYTE *buf, long len)
 	p210_capture *c = owner;
 	if (!c || !c->running)
 		return S_OK;
-	/* P210: luma plane (height rows) then the interleaved CbCr plane (height rows) */
-	const long rows = (long)c->height * 2;
-	const long stride = len / rows;
-	if (stride < (long)c->width * 2) {
+	const uint32_t w = c->width, h = c->height, half = w / 2;
+	const uint32_t rows = c->v210 ? h : h * 2;
+	const uint32_t min_stride = c->v210 ? ((w + 5) / 6) * 16 : w * 2;
+	if (len <= 0 || (uint32_t)len / rows < min_stride || (c->v210 && (uint32_t)len % rows)) {
 		if (c->short_buffers++ == 0)
-			obs_log(LOG_WARNING, "p210: buffer of %ld bytes is too small for %ux%u P210; frame dropped", len,
-				c->width, c->height);
+			obs_log(LOG_WARNING, "4:2:2 capture: invalid %s buffer (%ld bytes for %ux%u); frame dropped",
+				c->v210 ? "v210" : "P210", len, w, h);
 		return S_OK;
 	}
-	const uint64_t t0 = os_gettime_ns();
-	const uint32_t w = c->width, h = c->height, half = w / 2;
-	c->i210.resize((size_t)w * h * 2);
-	uint16_t *y = c->i210.data();
-	uint16_t *cb = y + (size_t)w * h;
-	uint16_t *cr = cb + (size_t)half * h;
-	for (uint32_t r = 0; r < h; r++) {
-		shift_row((const uint16_t *)(buf + (size_t)stride * r), y + (size_t)w * r, w);
-		split_row((const uint16_t *)(buf + (size_t)stride * (h + r)), cb + (size_t)half * r,
-			  cr + (size_t)half * r, half);
-	}
-	c->convert_ns += os_gettime_ns() - t0;
-
+	const uint32_t stride = (uint32_t)len / rows;
 	obs_source_frame frame = {};
-	frame.format = VIDEO_FORMAT_I210;
 	frame.width = w;
 	frame.height = h;
-	frame.data[0] = (uint8_t *)y;
-	frame.linesize[0] = w * 2;
-	frame.data[1] = (uint8_t *)cb;
-	frame.linesize[1] = half * 2;
-	frame.data[2] = (uint8_t *)cr;
-	frame.linesize[2] = half * 2;
+	if (c->v210) {
+		frame.format = VIDEO_FORMAT_V210;
+		frame.data[0] = buf;
+		frame.linesize[0] = stride;
+	} else {
+		const uint64_t t0 = os_gettime_ns();
+		c->i210.resize((size_t)w * h * 2);
+		uint16_t *y = c->i210.data();
+		uint16_t *cb = y + (size_t)w * h;
+		uint16_t *cr = cb + (size_t)half * h;
+		for (uint32_t r = 0; r < h; r++) {
+			shift_row((const uint16_t *)(buf + (size_t)stride * r), y + (size_t)w * r, w);
+			split_row((const uint16_t *)(buf + (size_t)stride * (h + r)), cb + (size_t)half * r,
+				  cr + (size_t)half * r, half);
+		}
+		c->convert_ns += os_gettime_ns() - t0;
+		frame.format = VIDEO_FORMAT_I210;
+		frame.data[0] = (uint8_t *)y;
+		frame.linesize[0] = w * 2;
+		frame.data[1] = (uint8_t *)cb;
+		frame.linesize[1] = half * 2;
+		frame.data[2] = (uint8_t *)cr;
+		frame.linesize[2] = half * 2;
+	}
 	frame.timestamp = c->base_ns + (uint64_t)(time * 1e9);
 	frame.full_range = c->full_range;
 	memcpy(frame.color_matrix, c->color_matrix, sizeof(frame.color_matrix));
@@ -332,7 +343,7 @@ static void stop_graph(p210_capture *c)
 	if (c->grabber)
 		c->grabber->SetCallback(nullptr, 1);
 	const uint64_t n = c->frames.load();
-	obs_log(LOG_INFO, "p210: stopped after %llu frames, P210 to I210 conversion %.2f ms per frame%s",
+	obs_log(LOG_INFO, "4:2:2 capture: stopped after %llu frames, conversion %.2f ms per frame%s",
 		(unsigned long long)n, n ? c->convert_ns.load() / 1e6 / (double)n : 0.0,
 		c->short_buffers ? " (some frames dropped: buffer too small)" : "");
 	c->grabber.Reset();
@@ -344,17 +355,18 @@ static void stop_graph(p210_capture *c)
 
 static bool start_graph(p210_capture *c, const capture_config &cfg)
 {
+	const char *format = cfg.v210 ? "v210" : "P210";
 	std::vector<device_info> devices = list_video_devices();
 	const device_info *dev = nullptr;
 	for (const device_info &d : devices) {
-		if (cfg.device.empty() ? device_offers_p210(d.moniker.Get()) : d.path == cfg.device) {
+		if (cfg.device.empty() ? device_offers_format(d.moniker.Get(), cfg.v210) : d.path == cfg.device) {
 			dev = &d;
 			break;
 		}
 	}
 	if (!dev) {
-		obs_log(LOG_WARNING, "p210: %s", cfg.device.empty() ? "no capture device offers P210"
-							       : "the selected capture device is not connected");
+		obs_log(LOG_WARNING, "4:2:2 capture (%s): %s", format,
+			cfg.device.empty() ? "no device offers the format" : "the selected device is not connected");
 		return false;
 	}
 
@@ -373,7 +385,7 @@ static bool start_graph(p210_capture *c, const capture_config &cfg)
 	if (SUCCEEDED(hr))
 		hr = grab_filter->QueryInterface(IID_ISampleGrabber_, (void **)c->grabber.GetAddressOf());
 	if (FAILED(hr)) {
-		obs_log(LOG_WARNING, "p210: could not create the DirectShow graph (0x%08lx)", (long)hr);
+		obs_log(LOG_WARNING, "4:2:2 capture: could not create the DirectShow graph (0x%08lx)", (long)hr);
 		c->graph.Reset();
 		c->grabber.Reset();
 		return false;
@@ -381,25 +393,31 @@ static bool start_graph(p210_capture *c, const capture_config &cfg)
 	builder->SetFiltergraph(c->graph.Get());
 	c->graph->AddFilter(source.Get(), L"source");
 
-	AM_MEDIA_TYPE *mt = find_p210(builder.Get(), source.Get(), config);
+	const REFERENCE_TIME interval = (REFERENCE_TIME)(10000000ULL * cfg.rate.den / cfg.rate.num);
+	AM_MEDIA_TYPE *mt = find_capture_format(builder.Get(), source.Get(), config, cfg.v210, cfg.width,
+						cfg.height, interval);
 	if (!mt) {
-		obs_log(LOG_WARNING, "p210: %s does not offer P210", dev->name.c_str());
+		obs_log(LOG_WARNING, "4:2:2 capture: %s has no matching %s mode for %ux%u at %s fps",
+			dev->name.c_str(), format, cfg.width, cfg.height, cfg.rate.label);
 		c->graph.Reset();
 		c->grabber.Reset();
 		return false;
 	}
-	REFERENCE_TIME *avg = nullptr;
-	BITMAPINFOHEADER *bmi = video_header(mt, &avg);
-	bmi->biWidth = (LONG)cfg.width;
-	bmi->biHeight = (LONG)cfg.height;
-	bmi->biSizeImage = cfg.width * cfg.height * 4;
-	mt->lSampleSize = bmi->biSizeImage;
-	*avg = (REFERENCE_TIME)(10000000ULL * cfg.rate.den / cfg.rate.num);
+	/* Keep the v210 driver's native media type, including its frame size and pitch. */
+	if (!cfg.v210) {
+		REFERENCE_TIME *avg = nullptr;
+		BITMAPINFOHEADER *bmi = video_header(mt, &avg);
+		bmi->biWidth = (LONG)cfg.width;
+		bmi->biHeight = (LONG)cfg.height;
+		bmi->biSizeImage = cfg.width * cfg.height * 4;
+		mt->lSampleSize = bmi->biSizeImage;
+		*avg = interval;
+	}
 	hr = config->SetFormat(mt);
 	free_media_type(mt);
 	if (FAILED(hr)) {
-		obs_log(LOG_WARNING, "p210: %s rejected P210 %ux%u at %s fps (0x%08lx)", dev->name.c_str(), cfg.width,
-			cfg.height, cfg.rate.label, (long)hr);
+		obs_log(LOG_WARNING, "4:2:2 capture: %s rejected %s %ux%u at %s fps (0x%08lx)", dev->name.c_str(), format,
+			cfg.width, cfg.height, cfg.rate.label, (long)hr);
 		c->graph.Reset();
 		c->grabber.Reset();
 		return false;
@@ -407,7 +425,7 @@ static bool start_graph(p210_capture *c, const capture_config &cfg)
 
 	AM_MEDIA_TYPE want = {};
 	want.majortype = MEDIATYPE_Video;
-	want.subtype = p210_subtype();
+	want.subtype = capture_subtype(cfg.v210);
 	c->grabber->SetMediaType(&want);
 	c->grabber->SetBufferSamples(FALSE);
 	c->grabber->SetOneShot(FALSE);
@@ -417,21 +435,35 @@ static bool start_graph(p210_capture *c, const capture_config &cfg)
 	c->graph->AddFilter(null_filter.Get(), L"null");
 	hr = builder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, source.Get(), grab_filter.Get(),
 				   null_filter.Get());
+	if (SUCCEEDED(hr) && cfg.v210) {
+		AM_MEDIA_TYPE connected = {};
+		hr = c->grabber->GetConnectedMediaType(&connected);
+		if (SUCCEEDED(hr)) {
+			REFERENCE_TIME *avg = nullptr;
+			const auto *bmi = video_header(&connected, &avg);
+			if (!bmi || connected.subtype != want.subtype || bmi->biWidth != (LONG)cfg.width ||
+			    bmi->biHeight != (LONG)cfg.height || *avg < interval - 2 || *avg > interval + 2)
+				hr = VFW_E_INVALIDMEDIATYPE;
+			clear_media_type(&connected);
+		}
+	}
 	if (SUCCEEDED(hr))
 		hr = c->graph.As(&c->control);
 	if (FAILED(hr)) {
-		obs_log(LOG_WARNING, "p210: could not connect %s (0x%08lx)", dev->name.c_str(), (long)hr);
+		obs_log(LOG_WARNING, "4:2:2 capture: could not connect %s (0x%08lx)", dev->name.c_str(), (long)hr);
 		c->grabber->SetCallback(nullptr, 1);
 		c->graph.Reset();
 		c->grabber.Reset();
 		c->control.Reset();
 		return false;
 	}
+	c->v210 = cfg.v210;
 	c->width = cfg.width;
 	c->height = cfg.height;
 	c->colorspace = cfg.colorspace;
 	c->full_range = cfg.range == VIDEO_RANGE_FULL;
-	video_format_get_parameters_for_format(cfg.colorspace, cfg.range, VIDEO_FORMAT_I210, c->color_matrix,
+	video_format_get_parameters_for_format(cfg.colorspace, cfg.range,
+					       cfg.v210 ? VIDEO_FORMAT_V210 : VIDEO_FORMAT_I210, c->color_matrix,
 					       c->range_min, c->range_max);
 	c->frames = 0;
 	c->short_buffers = 0;
@@ -440,12 +472,12 @@ static bool start_graph(p210_capture *c, const capture_config &cfg)
 	c->running = true;
 	hr = c->control->Run();
 	if (FAILED(hr)) {
-		obs_log(LOG_WARNING, "p210: %s did not start (0x%08lx)", dev->name.c_str(), (long)hr);
+		obs_log(LOG_WARNING, "4:2:2 capture: %s did not start (0x%08lx)", dev->name.c_str(), (long)hr);
 		stop_graph(c);
 		return false;
 	}
-	obs_log(LOG_INFO, "p210: capturing %s as P210 %ux%u at %s fps, %s %s range (passed to OBS as I210)",
-		dev->name.c_str(), cfg.width, cfg.height, cfg.rate.label,
+	obs_log(LOG_INFO, "4:2:2 capture: capturing %s as %s %ux%u at %s fps, %s %s range",
+		dev->name.c_str(), format, cfg.width, cfg.height, cfg.rate.label,
 		cfg.colorspace == VIDEO_CS_601 ? "Rec. 601" : "Rec. 709", c->full_range ? "full" : "limited");
 	return true;
 }
@@ -474,6 +506,7 @@ static capture_config read_config(obs_data_t *settings)
 {
 	capture_config cfg;
 	cfg.device = obs_data_get_string(settings, "device");
+	cfg.v210 = obs_data_get_int(settings, "pixel_format") == 1;
 	unsigned w = 0, h = 0;
 	if (sscanf(obs_data_get_string(settings, "resolution"), "%ux%u", &w, &h) == 2 && w >= 64 && h >= 64 &&
 	    w % 2 == 0) {
@@ -536,13 +569,18 @@ static obs_properties_t *p210_get_properties(void *)
 {
 	obs_properties_t *props = obs_properties_create();
 
+	obs_property_t *format = obs_properties_add_list(props, "pixel_format", obs_module_text("P210.PixelFormat"),
+							 OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(format, "P210", 0);
+	obs_property_list_add_int(format, "v210", 1);
+
 	obs_property_t *dev = obs_properties_add_list(props, "device", obs_module_text("P210.Device"),
 						      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(dev, obs_module_text("P210.Device.Auto"), "");
 	/* properties are built on the UI thread; DirectShow enumeration needs COM there too */
 	const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 	for (const device_info &d : list_video_devices())
-		if (device_offers_p210(d.moniker.Get()))
+		if (device_offers_format(d.moniker.Get(), false) || device_offers_format(d.moniker.Get(), true))
 			obs_property_list_add_string(dev, d.name.c_str(), d.path.c_str());
 	if (SUCCEEDED(co))
 		CoUninitialize();

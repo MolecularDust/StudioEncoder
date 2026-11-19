@@ -4,7 +4,9 @@
 #include "settings.h"
 
 #ifdef _WIN32
-void se_register_p210_capture(void); /* capture-p210.cpp */
+void se_register_p210_capture(void);
+#elif defined(__linux__)
+void se_register_v4l2_v210_capture(void);
 #endif
 
 OBS_DECLARE_MODULE()
@@ -37,6 +39,8 @@ bool obs_module_load(void)
 	}
 #ifdef _WIN32
 	se_register_p210_capture();
+#elif defined(__linux__)
+	se_register_v4l2_v210_capture();
 #endif
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;

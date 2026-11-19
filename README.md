@@ -61,7 +61,7 @@ The capture card decides whether you really record 10-bit 4:2:2, because it has 
 
 **Cards.** The least expensive way to capture 4K 10-bit 4:2:2 on a PC is a Blackmagic Design Intensity or DeckLink card, or a Magewell Pro Capture card. AJA and Datapath cards also do it, but at a much higher price.
 
-**P210 in OBS.** OBS cannot capture the P210 pixel format (10-bit 4:2:2) in its own Video Capture Device source, which stops at 10-bit 4:2:0. Blackmagic cards (v210) already work in OBS through its DeckLink source. StudioEncoder adds support for Magewell cards and any other card that outputs P210, which OBS never had. Use the **SE: 10-bit 4:2:2 capture (P210)** source.
+**P210 in OBS.** OBS cannot capture the P210 pixel format (10-bit 4:2:2) in its own Video Capture Device source, which stops at 10-bit 4:2:0. Blackmagic cards (v210) already work in OBS through its DeckLink source. StudioEncoder's **SE: 10-bit 4:2:2 capture (P210 / v210)** source supports devices exposing either format through DirectShow, including Magewell P210 and Blackmagic WDM v210.
 
 **PCIe cards.** The card needs a slot wired for **x4 lanes** to run at full capacity. Do not let it share lanes with an M.2 socket or SATA ports, which can cut the slot to x2 or x1. Check your motherboard manual.
 
@@ -141,16 +141,25 @@ For Radeon users. AMD's video encoder cannot do 4:2:2 at all (and its H.264 enco
 - Measured on a Radeon RX 9070 XT: about 3.8 ms per 4K frame, no repeated frames at 4K 29.97. The AMD encoder returns each packet one frame late, so the last frame before you press Stop is dropped.
 - Recordings are HEVC Main 10 in MOV (all frames keyframes, steady timestamps, decode without errors in FFmpeg). Not yet tried in Resolve or Premiere.
 
-## 10-bit 4:2:2 capture (P210), Windows
+## 10-bit 4:2:2 capture (P210 / v210), Windows
 
-OBS's own Video Capture Device source can't bring in 10-bit 4:2:2: its DirectShow capture stops at P010 (10-bit 4:2:0). Some capture cards, such as Magewell Pro Capture, offer 10-bit 4:2:2 as P210. StudioEncoder adds a source for them: **Sources > + > SE: 10-bit 4:2:2 capture (P210)**.
+OBS's own Video Capture Device source can't bring in 10-bit 4:2:2: its DirectShow capture stops at P010 (10-bit 4:2:0). StudioEncoder adds **Sources > + > SE: 10-bit 4:2:2 capture (P210 / v210)** for cards that expose either format through DirectShow.
 
-- Pick the card under Device, or leave it on "First device that offers P210".
+- Set **Pixel format** to **v210** for Blackmagic WDM Capture, or **P210** for Magewell P210. P210 is the default.
+- Pick the card under **Device**, or let the source select the first device that advertises the selected format. For v210, select a resolution and frame rate advertised by the driver.
 - Set Resolution and Frame rate to match the camera's HDMI signal (default 3840x2160, 29.97).
 - Set **Settings > Video > Advanced > Color Format to P216** so the 10 bits reach the encoder. With P216, OBS mixes the scene in 16-bit floating point.
 - Add the card's audio with a separate Audio Input Capture source.
 
-Frames are converted from P210 to I210 for OBS: a lossless shift and plane split, about 2.4 ms per 4K frame on a Ryzen 9 9950X3D. Tested with a Magewell Pro Capture HDMI 4K at 3840x2160 29.97: no repeated frames, and the samples carry real 10-bit values. `tools/p210-probe.cpp` is a small command-line program that checks whether a card's P210 output holds real 10-bit data.
+Packed v210 frames are passed directly to OBS. Frames are converted from P210 to I210 for OBS: a lossless shift and plane split, about 2.4 ms per 4K frame on a Ryzen 9 9950X3D. Tested with a Magewell Pro Capture HDMI 4K at 3840x2160 29.97: no repeated frames, and the samples carry real 10-bit values. `tools/p210-probe.cpp` is a small command-line program that checks whether a card's P210 output holds real 10-bit data.
+
+## v210 capture, Linux
+
+Use **SE: 10-bit 4:2:2 capture (v210 / V4L2)** with a device whose Linux driver advertises progressive, packed v210 on a single-plane V4L2 capture node. Select the device and match the incoming resolution and frame rate. A device path under `/dev/v4l/by-id/` can also be entered. For DeckLink devices exposed through Blackmagic Desktop Video's SDK, use OBS's built-in **Blackmagic Device** source.
+
+## GitHub Actions builds
+
+The **Build StudioEncoder** workflow uploads separate Windows x64, Windows ARM64 and Ubuntu x86-64 artifacts. It runs on pull requests, branch pushes, and manual dispatch.
 
 ## Requirements
 

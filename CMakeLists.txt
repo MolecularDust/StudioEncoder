@@ -23,7 +23,12 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-fronten
 
 # Rust ProRes backend, built as a static library behind a small C ABI (see rust/src/lib.rs).
 find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{HOME}/.cargo/bin" REQUIRED)
+set(RUST_TARGET_ARGS)
 set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust/target/release")
+if(WIN32 AND CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
+  set(RUST_TARGET_ARGS --target aarch64-pc-windows-msvc)
+  set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust/target/aarch64-pc-windows-msvc/release")
+endif()
 if(WIN32)
   set(RUST_LIB "${RUST_LIB_DIR}/studioencoder_rs.lib")
 else()
@@ -31,7 +36,7 @@ else()
 endif()
 add_custom_target(
   studioencoder_rs_build
-  COMMAND "${CARGO_EXECUTABLE}" build --release --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/rust/Cargo.toml"
+  COMMAND "${CARGO_EXECUTABLE}" build --release --locked ${RUST_TARGET_ARGS} --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/rust/Cargo.toml"
   BYPRODUCTS "${RUST_LIB}"
   COMMENT "Building Rust ProRes backend"
   USES_TERMINAL
@@ -82,10 +87,12 @@ else()
   message(STATUS "StudioEncoder: oneVPL not found, building without the QuickSync HEVC 4:2:2 encoder")
 endif()
 
-# 10-bit 4:2:2 (P210) capture source: DirectShow, Windows only
+# 10-bit 4:2:2 capture sources
 if(WIN32)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/capture-p210.cpp)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE strmiids ole32 oleaut32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/capture-v4l2-v210.cpp)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
